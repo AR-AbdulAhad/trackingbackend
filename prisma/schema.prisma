@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Visitor {
+  id                 BigInt    @id @default(autoincrement())
+  visitorId          String    @unique @db.Char(36)
+  emailHash          String?   @db.Char(64)
+  phoneHash          String?   @db.Char(64)
+  educationType       EducationType?
+  school             String?
+  graduationYear     Int?
+  packagePreference  PackageType?
+  productInterest    ProductInterest?
+  visitCount         Int       @default(1)
+  firstVisitAt       DateTime
+  lastVisitAt        DateTime
+  isReturning        Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sessions           Session[]
+  events             Event[]
+  progress           ConfiguratorProgress[]
+  orders             Order[]
+  audienceMembership AudienceMembership[]
+  recordings         SessionRecording[]
+}
+
+enum EducationType {
+  STX
+  HHX
+  HTX
+  HF
+}
+
+enum PackageType {
+  premium
+  standard
+}
+
+enum ProductInterest {
+  graduation_cap
+  studywear
+  both
+}
+
+enum SourceApp {
+  wordpress
+  gradcap_configurator
+  studywear_configurator
+}
+
+enum Configurator {
+  gradcap
+  studywear
+}
+
+enum OrderStatus {
+  cart
+  checkout_started
+  purchased
+  abandoned
+}
+
+enum Milestone {
+  started
+  m25
+  m50
+  m75
+  m100
+}
+
+model Session {
+  id              BigInt    @id @default(autoincrement())
+  visitor         Visitor   @relation(fields: [visitorId], references: [visitorId])
+  visitorId       String
+  sourceApp       SourceApp
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationSeconds Int?
+  entryPage       String?
+  exitPage        String?
+
+  @@index([visitorId, startedAt])
+}
+
+model Event {
+  id           BigInt    @id @default(autoincrement())
+  visitor      Visitor   @relation(fields: [visitorId], references: [visitorId])
+  visitorId    String
+  eventName    String
+  sourceApp    SourceApp
+  eventParams  Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([visitorId, eventName])
+  @@index([eventName, createdAt])
+}
+
+model ConfiguratorProgress {
+  id            BigInt        @id @default(autoincrement())
+  visitor       Visitor       @relation(fields: [visitorId], references: [visitorId])
+  visitorId     String
+  configurator  Configurator
+  milestone     Milestone
+  reachedAt     DateTime      @default(now())
+
+  @@unique([visitorId, configurator, milestone])
+}
+
+model Order {
+  id            BigInt        @id @default(autoincrement())
+  visitor       Visitor       @relation(fields: [visitorId], references: [visitorId])
+  visitorId     String
+  configurator  Configurator
+  status        OrderStatus
+  value         Decimal?      @db.Decimal(10, 2)
+  currency      String        @default("DKK") @db.Char(3)
+  packageType   PackageType?
+  orderRef      String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status])
+}
+
+model AudienceMembership {
+  id            BigInt    @id @default(autoincrement())
+  visitor       Visitor   @relation(fields: [visitorId], references: [visitorId])
+  visitorId     String
+  audienceName  String
+  addedAt       DateTime  @default(now())
+
+  @@unique([visitorId, audienceName])
+}
+
+enum Role {
+  SUPERADMIN
+  ADMIN
+  VIEWER
+}
+
+model AdminUser {
+  id           BigInt   @id @default(autoincrement())
+  email        String   @unique
+  displayName  String?
+  passwordHash String
+  profilePhoto String?  @db.LongText
+  role         Role     @default(ADMIN)
+  pageAccess   Json?    @default("[]")
+  createdAt    DateTime @default(now())
+}
+
+model SessionRecording {
+  id        BigInt   @id @default(autoincrement())
+  visitorId String
+  visitor   Visitor  @relation(fields: [visitorId], references: [visitorId])
+  events    Json
+  duration  Int?
+  pageUrl   String?
+  createdAt DateTime @default(now())
+
+  @@index([visitorId])
+}
