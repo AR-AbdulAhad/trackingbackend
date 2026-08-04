@@ -27,14 +27,14 @@ export const createRecording = async (req, res) => {
     }
 
     if (recordingId) {
-      await prisma.sessionRecording.update({
-        where: { id: BigInt(recordingId) },
-        data: {
-          events,
-          duration: duration || 0,
-          pageUrl: pageUrl || '',
-        }
-      });
+      const newEventsStr = JSON.stringify(events);
+      await prisma.$executeRaw`
+        UPDATE SessionRecording 
+        SET events = JSON_MERGE_PRESERVE(events, CAST(${newEventsStr} AS JSON)),
+            duration = ${duration || 0},
+            pageUrl = ${pageUrl || ''}
+        WHERE id = ${BigInt(recordingId)}
+      `;
       return res.json({ id: recordingId });
     }
 
