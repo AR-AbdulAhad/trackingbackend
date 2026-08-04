@@ -40,7 +40,7 @@ export const createRecording = async (req, res) => {
     if (recordingId) {
       await prisma.$executeRaw`
         UPDATE SessionRecording 
-        SET events = JSON_MERGE_PRESERVE(events, CAST(${sanitizedStr} AS JSON)),
+        SET events = JSON_MERGE_PRESERVE(events, ${sanitizedStr}),
             duration = ${duration || 0},
             pageUrl = ${pageUrl || ''}
         WHERE id = ${BigInt(recordingId)}
