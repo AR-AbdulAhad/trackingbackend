@@ -26,11 +26,12 @@ export const createRecording = async (req, res) => {
       }
     }
 
-    // Remove unpaired surrogates which cause MySQL JSON validation to fail
+    // Aggressively remove all surrogate characters (emojis, etc) to prevent MariaDB utf8 truncation bugs
     let sanitizedStr = "[]";
     try {
       const eventsStr = JSON.stringify(events);
-      sanitizedStr = eventsStr.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|([^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD");
+      // This removes all characters in the surrogate ranges, safely eliminating 4-byte characters and unpaired surrogates
+      sanitizedStr = eventsStr.replace(/[\uD800-\uDFFF]/g, "");
     } catch (e) {
       console.warn('Failed to sanitize events');
     }
