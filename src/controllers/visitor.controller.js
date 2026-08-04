@@ -29,39 +29,55 @@ export const identifyVisitor = async (req, res) => {
       where: { visitorId },
     });
 
+    let isEffectivelyNew = false;
+
     if (!existingVisitor) {
-      const newVisitor = await prisma.visitor.create({
-        data: {
+      try {
+        const newVisitor = await prisma.visitor.create({
+          data: {
+            visitorId,
+            emailHash,
+            phoneHash,
+            educationType,
+            school,
+            graduationYear,
+            packagePreference,
+            productInterest,
+            visitCount: 1,
+            firstVisitAt: new Date(),
+            lastVisitAt: new Date(),
+            isReturning: false,
+          },
+        });
+
+        // Emit real-time notification
+        io.emit('notification', {
+          type: 'new_visitor',
+          message: `New visitor from ${school || 'unknown school'}${educationType ? ` (${educationType})` : ''}`,
           visitorId,
-          emailHash,
-          phoneHash,
-          educationType,
-          school,
-          graduationYear,
-          packagePreference,
-          productInterest,
-          visitCount: 1,
-          firstVisitAt: new Date(),
-          lastVisitAt: new Date(),
-          isReturning: false,
-        },
-      });
+          timestamp: new Date().toISOString(),
+        });
 
-      // Emit real-time notification
-      io.emit('notification', {
-        type: 'new_visitor',
-        message: `New visitor from ${school || 'unknown school'}${educationType ? ` (${educationType})` : ''}`,
-        visitorId,
-        timestamp: new Date().toISOString(),
-      });
-
-      return res.status(200).json(sanitizeBigInt(newVisitor));
+        return res.status(200).json(sanitizeBigInt(newVisitor));
+      } catch (e) {
+        if (e.code === 'P2002') {
+          // Concurrently created by another request. Fall through to update.
+          isEffectivelyNew = true;
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      // If it exists but was lazily created by an event moments ago
+      const ageMs = new Date().getTime() - existingVisitor.createdAt.getTime();
+      if (ageMs < 60000 && existingVisitor.isReturning === false && existingVisitor.visitCount === 1) {
+        isEffectivelyNew = true;
+      }
     }
 
     // Update existing visitor
     const updatedData = {
       lastVisitAt: new Date(),
-      isReturning: true,
     };
 
     if (emailHash !== undefined) updatedData.emailHash = emailHash;
@@ -72,14 +88,27 @@ export const identifyVisitor = async (req, res) => {
     if (packagePreference !== undefined) updatedData.packagePreference = packagePreference;
     if (productInterest !== undefined) updatedData.productInterest = productInterest;
 
-    if (newSession) {
+    if (newSession && !isEffectivelyNew) {
       updatedData.visitCount = { increment: 1 };
+    }
+
+    if (!isEffectivelyNew) {
+      updatedData.isReturning = true;
     }
 
     const visitor = await prisma.visitor.update({
       where: { visitorId },
       data: updatedData,
     });
+
+    if (isEffectivelyNew) {
+      io.emit('notification', {
+        type: 'new_visitor',
+        message: `New visitor from ${visitor.school || 'unknown school'}${visitor.educationType ? ` (${visitor.educationType})` : ''}`,
+        visitorId,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     res.status(200).json(sanitizeBigInt(visitor));
   } catch (error) {
