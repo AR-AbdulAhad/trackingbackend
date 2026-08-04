@@ -1,4 +1,11 @@
 import { prisma } from '../lib/prisma.js';
+import fs from 'fs/promises';
+import path from 'path';
+
+// Define a local directory for storing heavy JSON payloads
+const RECORDINGS_DIR = path.join(process.cwd(), 'recordings_data');
+// Ensure directory exists
+fs.mkdir(RECORDINGS_DIR, { recursive: true }).catch(() => {});
 
 export const createRecording = async (req, res) => {
   try {
@@ -26,39 +33,43 @@ export const createRecording = async (req, res) => {
       }
     }
 
-    // Aggressively remove all surrogate characters (emojis, etc) to prevent MariaDB utf8 truncation bugs
-    let sanitizedStr = "[]";
-    try {
-      const eventsStr = JSON.stringify(events);
-      // This removes all characters in the surrogate ranges, safely eliminating 4-byte characters and unpaired surrogates
-      sanitizedStr = eventsStr.replace(/[\uD800-\uDFFF]/g, "");
-    } catch (e) {
-      console.warn('Failed to sanitize events');
-    }
-
     let recId = recordingId;
 
     if (!recId) {
-      // Create empty recording first to bypass Prisma's JSON serialization bugs on MariaDB
+      // Create empty recording in DB to completely bypass MariaDB JSON limits and packet limits
       const recording = await prisma.sessionRecording.create({
         data: {
           visitorId,
-          events: [],
-          duration: 0,
+          events: [], // Empty array in DB
+          duration: duration || 0,
           pageUrl: pageUrl || '',
         }
       });
       recId = Number(recording.id);
-    }
+      
+      // Save initial events to File System
+      await fs.writeFile(path.join(RECORDINGS_DIR, `${recId}.json`), JSON.stringify(events));
+    } else {
+      // Update existing recording
+      const filePath = path.join(RECORDINGS_DIR, `${recId}.json`);
+      try {
+        const existingData = await fs.readFile(filePath, 'utf-8');
+        const existingEvents = JSON.parse(existingData);
+        existingEvents.push(...events);
+        await fs.writeFile(filePath, JSON.stringify(existingEvents));
+      } catch (e) {
+        // If file doesn't exist, just write it
+        await fs.writeFile(filePath, JSON.stringify(events));
+      }
 
-    // Now update using our proven parameterized raw query
-    await prisma.$executeRaw`
-      UPDATE SessionRecording 
-      SET events = JSON_MERGE_PRESERVE(events, ${sanitizedStr}),
-          duration = ${duration || 0},
-          pageUrl = ${pageUrl || ''}
-      WHERE id = ${BigInt(recId)}
-    `;
+      await prisma.sessionRecording.update({
+        where: { id: BigInt(recId) },
+        data: { 
+          duration: duration || 0,
+          pageUrl: pageUrl || ''
+        }
+      });
+    }
 
     res.json({ id: recId });
   } catch (error) {
@@ -89,7 +100,24 @@ export const getRecordingEvents = async (req, res) => {
       where: { id: BigInt(id) }
     });
     if (!recording) return res.status(404).json({ error: 'Recording not found' });
-    res.json({ events: recording.events, duration: recording.duration, pageUrl: recording.pageUrl, createdAt: recording.createdAt });
+
+    let finalEvents = [];
+    try {
+      // Try to load from File System first (new approach)
+      const filePath = path.join(RECORDINGS_DIR, `${id}.json`);
+      const fileData = await fs.readFile(filePath, 'utf-8');
+      finalEvents = JSON.parse(fileData);
+    } catch(e) {
+      // Fallback to DB if file doesn't exist (for old recordings before this fix)
+      finalEvents = recording.events;
+    }
+
+    res.json({ 
+      events: finalEvents, 
+      duration: recording.duration, 
+      pageUrl: recording.pageUrl, 
+      createdAt: recording.createdAt 
+    });
   } catch (error) {
     console.error('Recording events fetch error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
