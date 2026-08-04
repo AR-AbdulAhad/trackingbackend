@@ -10,6 +10,19 @@ export const trackEvent = async (req, res) => {
   }
 
   try {
+    // 0. Ensure visitor exists to prevent foreign key constraint violations
+    await prisma.visitor.upsert({
+      where: { visitorId },
+      update: {},
+      create: {
+        visitorId,
+        visitCount: 1,
+        firstVisitAt: new Date(),
+        lastVisitAt: new Date(),
+        isReturning: false,
+      }
+    });
+
     // 1. Insert into Event table
     await prisma.event.create({
       data: {
