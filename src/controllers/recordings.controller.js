@@ -28,36 +28,38 @@ export const createRecording = async (req, res) => {
 
     // Remove unpaired surrogates which cause MySQL JSON validation to fail
     let sanitizedStr = "[]";
-    let safeEvents = events;
     try {
       const eventsStr = JSON.stringify(events);
       sanitizedStr = eventsStr.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|([^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD");
-      safeEvents = JSON.parse(sanitizedStr);
     } catch (e) {
       console.warn('Failed to sanitize events');
     }
 
-    if (recordingId) {
-      await prisma.$executeRaw`
-        UPDATE SessionRecording 
-        SET events = JSON_MERGE_PRESERVE(events, ${sanitizedStr}),
-            duration = ${duration || 0},
-            pageUrl = ${pageUrl || ''}
-        WHERE id = ${BigInt(recordingId)}
-      `;
-      return res.json({ id: recordingId });
+    let recId = recordingId;
+
+    if (!recId) {
+      // Create empty recording first to bypass Prisma's JSON serialization bugs on MariaDB
+      const recording = await prisma.sessionRecording.create({
+        data: {
+          visitorId,
+          events: [],
+          duration: 0,
+          pageUrl: pageUrl || '',
+        }
+      });
+      recId = Number(recording.id);
     }
 
-    const recording = await prisma.sessionRecording.create({
-      data: {
-        visitorId,
-        events: safeEvents,
-        duration: duration || 0,
-        pageUrl: pageUrl || '',
-      }
-    });
+    // Now update using our proven parameterized raw query
+    await prisma.$executeRaw`
+      UPDATE SessionRecording 
+      SET events = JSON_MERGE_PRESERVE(events, ${sanitizedStr}),
+          duration = ${duration || 0},
+          pageUrl = ${pageUrl || ''}
+      WHERE id = ${BigInt(recId)}
+    `;
 
-    res.json({ id: Number(recording.id) });
+    res.json({ id: recId });
   } catch (error) {
     console.error('Recording create error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
