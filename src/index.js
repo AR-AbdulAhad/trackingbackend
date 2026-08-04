@@ -21,8 +21,9 @@ const port = process.env.PORT || 3000;
 // CORS config
 const allowedOrigins = [
   'https://studentlife.dk',
-  'https://config.studentlife.dk',
-  'https://studywear.studentlife.dk',
+  'https://studenterhue.studentlife.dk',
+  'https://cloth.studentlife.dk',
+  'https://trackingdashboard.studentlife.dk',
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:3000',
