@@ -2,7 +2,7 @@ import { prisma } from '../lib/prisma.js';
 
 export const createRecording = async (req, res) => {
   try {
-    const { visitorId, events, duration, pageUrl } = req.body;
+    const { recordingId, visitorId, events, duration, pageUrl } = req.body;
     if (!visitorId || !events) {
       return res.status(400).json({ error: 'visitorId and events are required' });
     }
@@ -24,6 +24,18 @@ export const createRecording = async (req, res) => {
       if (upsertError.code !== 'P2002') {
         throw upsertError;
       }
+    }
+
+    if (recordingId) {
+      await prisma.sessionRecording.update({
+        where: { id: BigInt(recordingId) },
+        data: {
+          events,
+          duration: duration || 0,
+          pageUrl: pageUrl || '',
+        }
+      });
+      return res.json({ id: recordingId });
     }
 
     const recording = await prisma.sessionRecording.create({
@@ -64,7 +76,7 @@ export const getRecordingEvents = async (req, res) => {
       where: { id: BigInt(id) }
     });
     if (!recording) return res.status(404).json({ error: 'Recording not found' });
-    res.json({ events: recording.events, duration: recording.duration, pageUrl: recording.pageUrl });
+    res.json({ events: recording.events, duration: recording.duration, pageUrl: recording.pageUrl, createdAt: recording.createdAt });
   } catch (error) {
     console.error('Recording events fetch error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
