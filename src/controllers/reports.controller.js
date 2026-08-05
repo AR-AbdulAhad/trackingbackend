@@ -163,14 +163,17 @@ export const getConversionRates = async (req, res) => {
     });
 
     const stats = {
-      education: { STX: { v: 0, o: 0 }, HHX: { v: 0, o: 0 }, HTX: { v: 0, o: 0 }, HF: { v: 0, o: 0 } },
+      education: {},
       package: { premium: { v: 0, o: 0 }, standard: { v: 0, o: 0 } },
       product: { gradcap: { v: 0, o: 0 }, studywear: { v: 0, o: 0 } }
     };
 
     visitors.forEach(v => {
       const hasOrder = v.orders.some(o => o.status === 'purchased');
-      if (v.educationType && stats.education[v.educationType]) {
+      if (v.educationType) {
+        if (!stats.education[v.educationType]) {
+          stats.education[v.educationType] = { v: 0, o: 0 };
+        }
         stats.education[v.educationType].v++;
         if (hasOrder) stats.education[v.educationType].o++;
       }
@@ -192,13 +195,13 @@ export const getConversionRates = async (req, res) => {
 
     const calc = (v, o) => v > 0 ? o / v : 0;
 
+    const byEducation = {};
+    Object.keys(stats.education).forEach(edu => {
+      byEducation[edu] = calc(stats.education[edu].v, stats.education[edu].o);
+    });
+
     res.json({
-      byEducation: {
-        STX: calc(stats.education.STX.v, stats.education.STX.o),
-        HHX: calc(stats.education.HHX.v, stats.education.HHX.o),
-        HTX: calc(stats.education.HTX.v, stats.education.HTX.o),
-        HF: calc(stats.education.HF.v, stats.education.HF.o)
-      },
+      byEducation,
       byPackage: {
         premium: calc(stats.package.premium.v, stats.package.premium.o),
         standard: calc(stats.package.standard.v, stats.package.standard.o),
@@ -236,10 +239,13 @@ export const getAudienceGrowth = async (req, res) => {
     visitors.forEach(v => {
       const date = v.firstVisitAt.toISOString().split('T')[0];
       if (!trendMap.has(date)) {
-        trendMap.set(date, { date, STX: 0, HHX: 0, HTX: 0, HF: 0, Premium: 0, Standard: 0 });
+        trendMap.set(date, { date, Premium: 0, Standard: 0 });
       }
       const data = trendMap.get(date);
-      if (v.educationType) data[v.educationType]++;
+      if (v.educationType) {
+        if (data[v.educationType] === undefined) data[v.educationType] = 0;
+        data[v.educationType]++;
+      }
       if (v.packagePreference === 'premium') data.Premium++;
       if (v.packagePreference === 'standard') data.Standard++;
     });
