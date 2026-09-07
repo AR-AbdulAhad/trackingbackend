@@ -18,10 +18,39 @@ const sanitizeBigInt = (obj) => {
 };
 
 export const identifyVisitor = async (req, res) => {
-  const { visitorId, emailHash, phoneHash, educationType, school, graduationYear, packagePreference, productInterest, newSession } = req.body;
+  const {
+    visitorId,
+    emailHash,
+    phoneHash,
+    educationType: rawEducationType,
+    edu_type,
+    school,
+    graduationYear,
+    packagePreference,
+    productInterest,
+    newSession,
+  } = req.body;
 
   if (!visitorId) {
     return res.status(400).json({ error: 'visitorId is required' });
+  }
+
+  // Normalize educationType to uppercase enum or null
+  let educationType = undefined;
+  const inputEducation = rawEducationType !== undefined ? rawEducationType : edu_type;
+  if (inputEducation !== undefined) {
+    if (typeof inputEducation === 'string' && inputEducation.trim()) {
+      const upper = inputEducation.trim().toUpperCase();
+      educationType = ['STX', 'HHX', 'HTX', 'HF'].includes(upper) ? upper : null;
+    } else {
+      educationType = null;
+    }
+  }
+
+  let parsedGradYear = undefined;
+  if (graduationYear !== undefined) {
+    parsedGradYear = graduationYear ? parseInt(graduationYear, 10) : null;
+    if (isNaN(parsedGradYear)) parsedGradYear = null;
   }
 
   try {
@@ -40,7 +69,7 @@ export const identifyVisitor = async (req, res) => {
             phoneHash,
             educationType,
             school,
-            graduationYear,
+            graduationYear: parsedGradYear !== undefined ? parsedGradYear : undefined,
             packagePreference,
             productInterest,
             visitCount: 1,
@@ -84,7 +113,7 @@ export const identifyVisitor = async (req, res) => {
     if (phoneHash !== undefined) updatedData.phoneHash = phoneHash;
     if (educationType !== undefined) updatedData.educationType = educationType;
     if (school !== undefined) updatedData.school = school;
-    if (graduationYear !== undefined) updatedData.graduationYear = graduationYear;
+    if (parsedGradYear !== undefined) updatedData.graduationYear = parsedGradYear;
     if (packagePreference !== undefined) updatedData.packagePreference = packagePreference;
     if (productInterest !== undefined) updatedData.productInterest = productInterest;
 

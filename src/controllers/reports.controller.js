@@ -318,7 +318,12 @@ export const getVisitors = async (req, res) => {
     const skip = (Number(page) - 1) * Number(limit);
 
     const where = {};
-    if (educationType) where.educationType = educationType;
+    if (educationType) {
+      const upperEdu = educationType.trim().toUpperCase();
+      if (['STX', 'HHX', 'HTX', 'HF'].includes(upperEdu)) {
+        where.educationType = upperEdu;
+      }
+    }
     if (search) {
       where.OR = [
         { school: { contains: search } },
