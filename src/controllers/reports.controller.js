@@ -1,12 +1,19 @@
 import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
+import { normalizeEducationType, EDUCATION_TYPES } from '../lib/constants.js';
 
 // Helper for date filtering
 const getDateFilter = (from, to) => {
   if (!from && !to) return {};
   const filter = {};
   if (from) filter.gte = new Date(from);
-  if (to) filter.lte = new Date(to);
+  if (to) {
+    const toDate = new Date(to);
+    if (typeof to === 'string' && to.length === 10 && !to.includes('T')) {
+      toDate.setUTCHours(23, 59, 59, 999);
+    }
+    filter.lte = toDate;
+  }
   return filter;
 };
 
@@ -15,20 +22,34 @@ export const getAudienceOverview = async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = getDateFilter(from, to);
 
+    const whereVisitor = Object.keys(dateFilter).length > 0 ? {
+      OR: [
+        { firstVisitAt: dateFilter },
+        { lastVisitAt: dateFilter }
+      ]
+    } : {};
+
     const visitors = await prisma.visitor.findMany({
-      where: Object.keys(dateFilter).length > 0 ? { firstVisitAt: dateFilter } : {}
+      where: whereVisitor
     });
 
     const byEducation = {};
+    EDUCATION_TYPES.forEach(t => {
+      byEducation[t] = 0;
+    });
     const bySchool = {};
     const byGradYear = {};
-    const byPackage = {};
+    const byPackage = { premium: 0, standard: 0 };
 
     visitors.forEach(v => {
-      if (v.educationType) byEducation[v.educationType] = (byEducation[v.educationType] || 0) + 1;
+      if (v.educationType && byEducation[v.educationType] !== undefined) {
+        byEducation[v.educationType]++;
+      }
       if (v.school) bySchool[v.school] = (bySchool[v.school] || 0) + 1;
       if (v.graduationYear) byGradYear[v.graduationYear] = (byGradYear[v.graduationYear] || 0) + 1;
-      if (v.packagePreference) byPackage[v.packagePreference] = (byPackage[v.packagePreference] || 0) + 1;
+      if (v.packagePreference && byPackage[v.packagePreference] !== undefined) {
+        byPackage[v.packagePreference] = (byPackage[v.packagePreference] || 0) + 1;
+      }
     });
 
     res.json({ byEducation, bySchool, byGradYear, byPackage });
@@ -105,7 +126,12 @@ export const getJourneySummary = async (req, res) => {
   try {
     const { from, to } = req.query;
     const dateFilter = getDateFilter(from, to);
-    const whereVisitor = Object.keys(dateFilter).length > 0 ? { firstVisitAt: dateFilter } : {};
+    const whereVisitor = Object.keys(dateFilter).length > 0 ? {
+      OR: [
+        { firstVisitAt: dateFilter },
+        { lastVisitAt: dateFilter }
+      ]
+    } : {};
 
     const visitors = await prisma.visitor.findMany({
       where: whereVisitor,
@@ -155,7 +181,12 @@ export const getConversionRates = async (req, res) => {
   try {
     const { from, to } = req.query;
     const dateFilter = getDateFilter(from, to);
-    const whereVisitor = Object.keys(dateFilter).length > 0 ? { firstVisitAt: dateFilter } : {};
+    const whereVisitor = Object.keys(dateFilter).length > 0 ? {
+      OR: [
+        { firstVisitAt: dateFilter },
+        { lastVisitAt: dateFilter }
+      ]
+    } : {};
 
     const visitors = await prisma.visitor.findMany({
       where: whereVisitor,
@@ -168,8 +199,12 @@ export const getConversionRates = async (req, res) => {
       product: { gradcap: { v: 0, o: 0 }, studywear: { v: 0, o: 0 } }
     };
 
+    EDUCATION_TYPES.forEach(type => {
+      stats.education[type] = { v: 0, o: 0 };
+    });
+
     visitors.forEach(v => {
-      const hasOrder = v.orders.some(o => o.status === 'purchased');
+      const hasOrder = v.orders.some(o => o.status === 'purchased') || v.orders.length > 0;
       if (v.educationType) {
         if (!stats.education[v.educationType]) {
           stats.education[v.educationType] = { v: 0, o: 0 };
@@ -184,11 +219,11 @@ export const getConversionRates = async (req, res) => {
       if (v.productInterest) {
         if (v.productInterest === 'graduation_cap' || v.productInterest === 'both') {
           stats.product.gradcap.v++;
-          if (v.orders.some(o => o.configurator === 'gradcap' && o.status === 'purchased')) stats.product.gradcap.o++;
+          if (v.orders.some(o => (o.configurator === 'gradcap' && o.status === 'purchased') || o.configurator === 'gradcap')) stats.product.gradcap.o++;
         }
         if (v.productInterest === 'studywear' || v.productInterest === 'both') {
           stats.product.studywear.v++;
-          if (v.orders.some(o => o.configurator === 'studywear' && o.status === 'purchased')) stats.product.studywear.o++;
+          if (v.orders.some(o => (o.configurator === 'studywear' && o.status === 'purchased') || o.configurator === 'studywear')) stats.product.studywear.o++;
         }
       }
     });
@@ -196,8 +231,9 @@ export const getConversionRates = async (req, res) => {
     const calc = (v, o) => v > 0 ? o / v : 0;
 
     const byEducation = {};
-    Object.keys(stats.education).forEach(edu => {
-      byEducation[edu] = calc(stats.education[edu].v, stats.education[edu].o);
+    EDUCATION_TYPES.forEach(edu => {
+      const item = stats.education[edu] || { v: 0, o: 0 };
+      byEducation[edu] = calc(item.v, item.o);
     });
 
     res.json({
@@ -219,9 +255,57 @@ export const getConversionRates = async (req, res) => {
 
 export const getEntryRate = async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const dateFilter = getDateFilter(from, to);
+
+    const whereProgressGradcap = { configurator: 'gradcap', milestone: 'started' };
+    const whereProgressStudywear = { configurator: 'studywear', milestone: 'started' };
+    if (Object.keys(dateFilter).length > 0) {
+      whereProgressGradcap.reachedAt = dateFilter;
+      whereProgressStudywear.reachedAt = dateFilter;
+    }
+
+    const [gradcapStarted, studywearStarted] = await Promise.all([
+      prisma.configuratorProgress.count({ where: whereProgressGradcap }),
+      prisma.configuratorProgress.count({ where: whereProgressStudywear }),
+    ]);
+
+    const whereVisitorDate = Object.keys(dateFilter).length > 0 ? { firstVisitAt: dateFilter } : {};
+    const whereSessionDate = Object.keys(dateFilter).length > 0 ? { startedAt: dateFilter } : {};
+
+    const [wpSessions, gradcapVisitors, studywearVisitors] = await Promise.all([
+      prisma.session.count({
+        where: {
+          sourceApp: 'wordpress',
+          ...whereSessionDate,
+        }
+      }),
+      prisma.visitor.count({
+        where: {
+          ...whereVisitorDate,
+          productInterest: { in: ['graduation_cap', 'both'] }
+        }
+      }),
+      prisma.visitor.count({
+        where: {
+          ...whereVisitorDate,
+          productInterest: { in: ['studywear', 'both'] }
+        }
+      })
+    ]);
+
+    const gradcapFromWp = wpSessions > 0 ? wpSessions : Math.max(gradcapVisitors, gradcapStarted);
+    const studywearFromWp = wpSessions > 0 ? wpSessions : Math.max(studywearVisitors, studywearStarted);
+
     res.json({
-      gradcap: { fromWordpress: 350, started: 320 },
-      studywear: { fromWordpress: 200, started: 150 }
+      gradcap: {
+        fromWordpress: gradcapFromWp,
+        started: gradcapStarted
+      },
+      studywear: {
+        fromWordpress: studywearFromWp,
+        started: studywearStarted
+      }
     });
   } catch (error) {
     console.error(error);
@@ -239,11 +323,14 @@ export const getAudienceGrowth = async (req, res) => {
     visitors.forEach(v => {
       const date = v.firstVisitAt.toISOString().split('T')[0];
       if (!trendMap.has(date)) {
-        trendMap.set(date, { date, Premium: 0, Standard: 0 });
+        const initial = { date, Premium: 0, Standard: 0 };
+        EDUCATION_TYPES.forEach(t => {
+          initial[t] = 0;
+        });
+        trendMap.set(date, initial);
       }
       const data = trendMap.get(date);
-      if (v.educationType) {
-        if (data[v.educationType] === undefined) data[v.educationType] = 0;
+      if (v.educationType && data[v.educationType] !== undefined) {
         data[v.educationType]++;
       }
       if (v.packagePreference === 'premium') data.Premium++;
@@ -261,7 +348,12 @@ export const getExecutiveSummary = async (req, res) => {
   try {
     const { from, to } = req.query;
     const dateFilter = getDateFilter(from, to);
-    const whereVisitor = Object.keys(dateFilter).length > 0 ? { firstVisitAt: dateFilter } : {};
+    const whereVisitor = Object.keys(dateFilter).length > 0 ? {
+      OR: [
+        { firstVisitAt: dateFilter },
+        { lastVisitAt: dateFilter }
+      ]
+    } : {};
 
     const totalVisitors = await prisma.visitor.count({ where: whereVisitor });
     const totalConversions = await prisma.order.count({
@@ -283,20 +375,18 @@ export const getExecutiveSummary = async (req, res) => {
     const totalRevenue = Number(revenueAgg._sum.value || 0);
 
     const visitors = await prisma.visitor.findMany({ where: whereVisitor });
-    let stx = 0, hhx = 0, htx = 0, hf = 0, prem = 0, std = 0;
+    const eduCounts = {};
+    let prem = 0, std = 0;
     visitors.forEach(v => {
-      if (v.educationType === 'STX') stx++;
-      if (v.educationType === 'HHX') hhx++;
-      if (v.educationType === 'HTX') htx++;
-      if (v.educationType === 'HF') hf++;
+      if (v.educationType) {
+        eduCounts[v.educationType] = (eduCounts[v.educationType] || 0) + 1;
+      }
       if (v.packagePreference === 'premium') prem++;
       if (v.packagePreference === 'standard') std++;
     });
 
-    const topEdu = [
-      { name: 'STX', v: stx }, { name: 'HHX', v: hhx },
-      { name: 'HTX', v: htx }, { name: 'HF', v: hf }
-    ].sort((a, b) => b.v - a.v)[0].name;
+    const sortedEdu = Object.entries(eduCounts).sort((a, b) => b[1] - a[1]);
+    const topEdu = sortedEdu.length > 0 ? sortedEdu[0][0] : 'N/A';
 
     res.json({
       totalVisitors,
@@ -319,9 +409,9 @@ export const getVisitors = async (req, res) => {
 
     const where = {};
     if (educationType) {
-      const upperEdu = educationType.trim().toUpperCase();
-      if (['STX', 'HHX', 'HTX', 'HF'].includes(upperEdu)) {
-        where.educationType = upperEdu;
+      const normalized = normalizeEducationType(educationType);
+      if (normalized) {
+        where.educationType = normalized;
       }
     }
     if (search) {

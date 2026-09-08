@@ -1,13 +1,19 @@
 import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
+import { EDUCATION_TYPES, normalizeEducationType } from '../lib/constants.js';
 
 // Helper: recursively convert all BigInt values to Number
 const sanitizeBigInt = (obj) => {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'bigint') return Number(obj);
-  if (obj instanceof Date) return obj; // Preserve Date objects
+  if (obj instanceof Date) return obj;
+  if (obj && typeof obj.toNumber === 'function') return obj.toNumber();
   if (Array.isArray(obj)) return obj.map(sanitizeBigInt);
   if (typeof obj === 'object') {
+    if ('s' in obj && 'e' in obj && 'd' in obj && Array.isArray(obj.d)) {
+      const numStr = obj.d.join('');
+      return Number(obj.s * Number(numStr) * Math.pow(10, obj.e - numStr.length + 1));
+    }
     const result = {};
     for (const [k, v] of Object.entries(obj)) {
       result[k] = sanitizeBigInt(v);
@@ -17,17 +23,18 @@ const sanitizeBigInt = (obj) => {
   return obj;
 };
 
+export { EDUCATION_TYPES, normalizeEducationType };
+
 export const identifyVisitor = async (req, res) => {
   const {
     visitorId,
     emailHash,
     phoneHash,
     educationType: rawEducationType,
-    edu_type,
     school,
     graduationYear,
-    packagePreference,
-    productInterest,
+    packagePreference: rawPackagePreference,
+    productInterest: rawProductInterest,
     newSession,
   } = req.body;
 
@@ -35,22 +42,40 @@ export const identifyVisitor = async (req, res) => {
     return res.status(400).json({ error: 'visitorId is required' });
   }
 
-  // Normalize educationType to uppercase enum or null
+  // Normalize educationType
   let educationType = undefined;
-  const inputEducation = rawEducationType !== undefined ? rawEducationType : edu_type;
-  if (inputEducation !== undefined) {
-    if (typeof inputEducation === 'string' && inputEducation.trim()) {
-      const upper = inputEducation.trim().toUpperCase();
-      educationType = ['STX', 'HHX', 'HTX', 'HF'].includes(upper) ? upper : null;
-    } else {
-      educationType = null;
-    }
+  if (rawEducationType !== undefined) {
+    educationType = normalizeEducationType(rawEducationType);
   }
 
+  // Normalize graduationYear
   let parsedGradYear = undefined;
   if (graduationYear !== undefined) {
     parsedGradYear = graduationYear ? parseInt(graduationYear, 10) : null;
     if (isNaN(parsedGradYear)) parsedGradYear = null;
+  }
+
+  // Normalize packagePreference ('premium' | 'standard')
+  let packagePreference = undefined;
+  if (rawPackagePreference !== undefined) {
+    if (typeof rawPackagePreference === 'string' && rawPackagePreference.trim()) {
+      const lower = rawPackagePreference.trim().toLowerCase();
+      packagePreference = ['premium', 'standard'].includes(lower) ? lower : null;
+    } else {
+      packagePreference = null;
+    }
+  }
+
+  // Normalize productInterest ('graduation_cap' | 'studywear' | 'both')
+  let productInterest = undefined;
+  if (rawProductInterest !== undefined) {
+    if (typeof rawProductInterest === 'string' && rawProductInterest.trim()) {
+      let cleanProd = rawProductInterest.trim().toLowerCase().replace(/[-\s]+/g, '_');
+      if (cleanProd === 'gradcap' || cleanProd === 'cap') cleanProd = 'graduation_cap';
+      productInterest = ['graduation_cap', 'studywear', 'both'].includes(cleanProd) ? cleanProd : null;
+    } else {
+      productInterest = null;
+    }
   }
 
   try {
@@ -65,13 +90,13 @@ export const identifyVisitor = async (req, res) => {
         const newVisitor = await prisma.visitor.create({
           data: {
             visitorId,
-            emailHash,
-            phoneHash,
-            educationType,
-            school,
-            graduationYear: parsedGradYear !== undefined ? parsedGradYear : undefined,
-            packagePreference,
-            productInterest,
+            emailHash: emailHash !== undefined ? emailHash : null,
+            phoneHash: phoneHash !== undefined ? phoneHash : null,
+            educationType: educationType !== undefined ? educationType : null,
+            school: school !== undefined ? school : null,
+            graduationYear: parsedGradYear !== undefined ? parsedGradYear : null,
+            packagePreference: packagePreference !== undefined ? packagePreference : null,
+            productInterest: productInterest !== undefined ? productInterest : null,
             visitCount: 1,
             firstVisitAt: new Date(),
             lastVisitAt: new Date(),

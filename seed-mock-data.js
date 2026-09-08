@@ -1,8 +1,9 @@
 import { PrismaClient } from '@prisma/client';
+import { EDUCATION_TYPES } from './src/lib/constants.js';
 
 const prisma = new PrismaClient();
 
-const eduTypes = ['STX', 'HHX', 'HTX', 'HF'];
+const eduTypes = EDUCATION_TYPES;
 const packages = ['premium', 'standard'];
 const products = ['graduation_cap', 'studywear', 'both'];
 const apps = ['wordpress', 'gradcap_configurator', 'studywear_configurator'];
@@ -35,9 +36,10 @@ async function main() {
   await prisma.configuratorProgress.deleteMany();
   await prisma.event.deleteMany();
   await prisma.session.deleteMany();
+  await prisma.sessionRecording.deleteMany();
   await prisma.visitor.deleteMany();
 
-  console.log('Generating realistic mock data...');
+  console.log('Generating realistic mock data for all 15 education programs...');
   const visitors = [];
   const now = new Date();
   const past30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -54,12 +56,8 @@ async function main() {
     // Weights: Premium 65%, Standard 35%
     const pkg = Math.random() < 0.65 ? 'premium' : 'standard';
     
-    // Weights: STX 50%, HHX 25%, HTX 15%, HF 10%
-    const rEdu = Math.random();
-    let edu = 'STX';
-    if (rEdu > 0.5 && rEdu <= 0.75) edu = 'HHX';
-    else if (rEdu > 0.75 && rEdu <= 0.90) edu = 'HTX';
-    else if (rEdu > 0.90) edu = 'HF';
+    // Distribute across all 15 education types
+    const edu = randItem(eduTypes);
 
     visitors.push({
       visitorId: generateId(),

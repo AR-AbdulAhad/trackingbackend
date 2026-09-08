@@ -44,15 +44,19 @@ export const trackEvent = async (req, res) => {
     if (sourceApp === 'gradcap_configurator') configurator = 'gradcap';
     if (sourceApp === 'studywear_configurator') configurator = 'studywear';
 
-    // 2. Handle configurator_progress
-    if (eventName === 'configurator_progress' && configurator && eventParams?.milestone) {
-      // Map '25', '50' to enum
+    // 2. Handle configurator progress / start
+    if (configurator && (eventName === 'configurator_started' || eventName === 'configurator_progress')) {
       let milestoneEnum = null;
-      if (eventParams.milestone === 'started') milestoneEnum = 'started';
-      if (eventParams.milestone === '25') milestoneEnum = 'm25';
-      if (eventParams.milestone === '50') milestoneEnum = 'm50';
-      if (eventParams.milestone === '75') milestoneEnum = 'm75';
-      if (eventParams.milestone === '100') milestoneEnum = 'm100';
+      if (eventName === 'configurator_started') {
+        milestoneEnum = 'started';
+      } else if (eventName === 'configurator_progress') {
+        const m = String(eventParams?.milestone || eventParams?.step || eventParams?.progress || '').toLowerCase();
+        if (m === 'started' || m === '0' || m === 'start') milestoneEnum = 'started';
+        else if (m === '25' || m === 'm25') milestoneEnum = 'm25';
+        else if (m === '50' || m === 'm50') milestoneEnum = 'm50';
+        else if (m === '75' || m === 'm75') milestoneEnum = 'm75';
+        else if (m === '100' || m === 'm100') milestoneEnum = 'm100';
+      }
 
       if (milestoneEnum) {
         await prisma.configuratorProgress.upsert({

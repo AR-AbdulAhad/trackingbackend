@@ -37,6 +37,17 @@ enum EducationType {
   HHX
   HTX
   HF
+  EUX
+  EUD
+  SOSUASSISTENT
+  SOSUHJAELPER
+  FRISOER
+  KOSMETOLOG
+  PAEDAGOG
+  PAU
+  ERNAERINGSASSISTENT
+  STU
+  LANDMAND
 }
 
 enum PackageType {
