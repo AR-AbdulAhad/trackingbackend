@@ -53,3 +53,35 @@ export const normalizeEducationType = (val) => {
 
   return EDUCATION_TYPES.includes(clean) ? clean : null;
 };
+
+export const PACKAGE_TYPES = [
+  'premium',
+  'luksus',
+  'standard',
+  'basic',
+];
+
+export const normalizePackageType = (val) => {
+  if (!val || typeof val !== 'string') return null;
+
+  const clean = val.trim().toLowerCase().replace(/[\s\-_]+/g, '');
+
+  if (clean.includes('premium')) return 'premium';
+  if (clean.includes('luksus')) return 'luksus';
+  if (clean.includes('standard')) return 'standard';
+  if (clean.includes('basic') || clean.includes('basichue')) return 'basic';
+
+  return null;
+};
+
+export const DEFAULT_CONFIGURATOR_STEPS = [
+  'KOKARDE',
+  'EMBLEM',
+  'BÅND',
+  'FOER',
+  'SKYGGE',
+  'HUESNOR',
+  'BRODERI',
+  'TILBEHØR',
+  'STØRRELSE',
+];

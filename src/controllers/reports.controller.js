@@ -39,7 +39,7 @@ export const getAudienceOverview = async (req, res) => {
     });
     const bySchool = {};
     const byGradYear = {};
-    const byPackage = { premium: 0, standard: 0 };
+    const byPackage = { premium: 0, luksus: 0, standard: 0, basic: 0 };
 
     visitors.forEach(v => {
       if (v.educationType && byEducation[v.educationType] !== undefined) {
@@ -195,7 +195,7 @@ export const getConversionRates = async (req, res) => {
 
     const stats = {
       education: {},
-      package: { premium: { v: 0, o: 0 }, standard: { v: 0, o: 0 } },
+      package: { premium: { v: 0, o: 0 }, luksus: { v: 0, o: 0 }, standard: { v: 0, o: 0 }, basic: { v: 0, o: 0 } },
       product: { gradcap: { v: 0, o: 0 }, studywear: { v: 0, o: 0 } }
     };
 
@@ -240,7 +240,9 @@ export const getConversionRates = async (req, res) => {
       byEducation,
       byPackage: {
         premium: calc(stats.package.premium.v, stats.package.premium.o),
+        luksus: calc(stats.package.luksus.v, stats.package.luksus.o),
         standard: calc(stats.package.standard.v, stats.package.standard.o),
+        basic: calc(stats.package.basic.v, stats.package.basic.o),
       },
       byProduct: {
         gradcap: calc(stats.product.gradcap.v, stats.product.gradcap.o),
@@ -323,7 +325,7 @@ export const getAudienceGrowth = async (req, res) => {
     visitors.forEach(v => {
       const date = v.firstVisitAt.toISOString().split('T')[0];
       if (!trendMap.has(date)) {
-        const initial = { date, Premium: 0, Standard: 0 };
+        const initial = { date, Premium: 0, Luksus: 0, Standard: 0, Basic: 0 };
         EDUCATION_TYPES.forEach(t => {
           initial[t] = 0;
         });
@@ -334,7 +336,9 @@ export const getAudienceGrowth = async (req, res) => {
         data[v.educationType]++;
       }
       if (v.packagePreference === 'premium') data.Premium++;
+      if (v.packagePreference === 'luksus') data.Luksus++;
       if (v.packagePreference === 'standard') data.Standard++;
+      if (v.packagePreference === 'basic') data.Basic++;
     });
 
     res.json({ trend: Array.from(trendMap.values()).slice(-30) });
@@ -376,17 +380,22 @@ export const getExecutiveSummary = async (req, res) => {
 
     const visitors = await prisma.visitor.findMany({ where: whereVisitor });
     const eduCounts = {};
-    let prem = 0, std = 0;
+    const pkgCounts = { premium: 0, luksus: 0, standard: 0, basic: 0 };
     visitors.forEach(v => {
       if (v.educationType) {
         eduCounts[v.educationType] = (eduCounts[v.educationType] || 0) + 1;
       }
-      if (v.packagePreference === 'premium') prem++;
-      if (v.packagePreference === 'standard') std++;
+      if (v.packagePreference && pkgCounts[v.packagePreference] !== undefined) {
+        pkgCounts[v.packagePreference]++;
+      }
     });
 
     const sortedEdu = Object.entries(eduCounts).sort((a, b) => b[1] - a[1]);
     const topEdu = sortedEdu.length > 0 ? sortedEdu[0][0] : 'N/A';
+
+    const sortedPkg = Object.entries(pkgCounts).sort((a, b) => b[1] - a[1]);
+    const topPkgRaw = sortedPkg.length > 0 && sortedPkg[0][1] > 0 ? sortedPkg[0][0] : 'premium';
+    const topPackage = topPkgRaw.charAt(0).toUpperCase() + topPkgRaw.slice(1);
 
     res.json({
       totalVisitors,
@@ -394,7 +403,7 @@ export const getExecutiveSummary = async (req, res) => {
       overallConversionRate,
       totalRevenue,
       topEducationType: topEdu,
-      topPackage: prem >= std ? 'Premium' : 'Standard'
+      topPackage
     });
   } catch (error) {
     console.error(error);

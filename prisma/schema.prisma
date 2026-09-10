@@ -52,7 +52,9 @@ enum EducationType {
 
 enum PackageType {
   premium
+  luksus
   standard
+  basic
 }
 
 enum ProductInterest {
@@ -109,8 +111,10 @@ model Event {
   sourceApp    SourceApp
   eventParams  Json?
   createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt @default(now())
 
-  @@index([visitorId, eventName])
+  @@unique([visitorId, eventName])
+  @@index([visitorId])
   @@index([eventName, createdAt])
 }
 

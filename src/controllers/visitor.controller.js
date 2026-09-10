@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
-import { EDUCATION_TYPES, normalizeEducationType } from '../lib/constants.js';
+import { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, DEFAULT_CONFIGURATOR_STEPS } from '../lib/constants.js';
 
 // Helper: recursively convert all BigInt values to Number
 const sanitizeBigInt = (obj) => {
@@ -23,7 +23,7 @@ const sanitizeBigInt = (obj) => {
   return obj;
 };
 
-export { EDUCATION_TYPES, normalizeEducationType };
+export { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType };
 
 export const identifyVisitor = async (req, res) => {
   const {
@@ -34,6 +34,9 @@ export const identifyVisitor = async (req, res) => {
     school,
     graduationYear,
     packagePreference: rawPackagePreference,
+    package: rawPackage,
+    packageName: rawPackageName,
+    pakke: rawPakke,
     productInterest: rawProductInterest,
     newSession,
   } = req.body;
@@ -55,15 +58,11 @@ export const identifyVisitor = async (req, res) => {
     if (isNaN(parsedGradYear)) parsedGradYear = null;
   }
 
-  // Normalize packagePreference ('premium' | 'standard')
+  // Normalize packagePreference ('premium' | 'luksus' | 'standard' | 'basic')
   let packagePreference = undefined;
-  if (rawPackagePreference !== undefined) {
-    if (typeof rawPackagePreference === 'string' && rawPackagePreference.trim()) {
-      const lower = rawPackagePreference.trim().toLowerCase();
-      packagePreference = ['premium', 'standard'].includes(lower) ? lower : null;
-    } else {
-      packagePreference = null;
-    }
+  const rawPkgVal = rawPackagePreference ?? rawPackage ?? rawPackageName ?? rawPakke;
+  if (rawPkgVal !== undefined) {
+    packagePreference = normalizePackageType(rawPkgVal);
   }
 
   // Normalize productInterest ('graduation_cap' | 'studywear' | 'both')
@@ -171,13 +170,22 @@ export const identifyVisitor = async (req, res) => {
   }
 };
 
+// Defined order for configurator events
+const EVENT_ORDER = [
+  'configurator_started',
+  'configurator_step_view',
+  'configurator_progress',
+  'configurator_completed',
+  'configurator_abandoned',
+];
+
 export const getVisitor = async (req, res) => {
   try {
     const visitorId = req.params.visitorId;
     const visitor = await prisma.visitor.findUnique({
       where: { visitorId },
       include: {
-        events: { orderBy: { createdAt: 'desc' }, take: 50 },
+        events: { orderBy: { createdAt: 'asc' } },
         sessions: { orderBy: { startedAt: 'desc' } },
         orders: { orderBy: { createdAt: 'desc' } },
         progress: { orderBy: { reachedAt: 'asc' } },
@@ -192,7 +200,96 @@ export const getVisitor = async (req, res) => {
       return res.status(404).json({ error: 'Visitor not found' });
     }
 
-    res.status(200).json(sanitizeBigInt(visitor));
+    const sanitized = sanitizeBigInt(visitor);
+
+    // --- Build ordered events object ---
+    // Map raw events by eventName first
+    const rawEventsMap = {};
+    if (Array.isArray(sanitized.events)) {
+      sanitized.events.forEach((ev) => {
+        rawEventsMap[ev.eventName] = ev;
+      });
+    }
+
+    // Build ordered object: known events first in defined order, then any extras
+    const orderedEvents = {};
+    EVENT_ORDER.forEach((name) => {
+      if (rawEventsMap[name]) orderedEvents[name] = rawEventsMap[name];
+    });
+    // Append any event types not in EVENT_ORDER
+    Object.keys(rawEventsMap).forEach((name) => {
+      if (!orderedEvents[name]) orderedEvents[name] = rawEventsMap[name];
+    });
+
+    // --- Compute stepTracking & missedSteps from step views / checkout events ---
+    const stepViewEvent = rawEventsMap['configurator_step_view'];
+    const completedEvent = rawEventsMap['configurator_completed'];
+    const checkoutEvent = rawEventsMap['checkout_started'] || rawEventsMap['purchase_completed'] || rawEventsMap['add_to_cart'];
+    const hasCheckedOut = Boolean(checkoutEvent || (Array.isArray(sanitized.orders) && sanitized.orders.length > 0));
+
+    // Choose primary source for step params
+    const primaryParams = stepViewEvent?.eventParams || completedEvent?.eventParams || checkoutEvent?.eventParams || null;
+
+    let stepTracking = null;
+    let missedSteps = null;
+
+    if (primaryParams) {
+      const p = primaryParams;
+      const visitedSteps = Array.isArray(p.visited_steps) 
+        ? p.visited_steps 
+        : (p.step_name ? [p.step_name] : []);
+
+      const totalSteps = Number(p.total_steps) || DEFAULT_CONFIGURATOR_STEPS.length;
+
+      const allSteps = Array.isArray(p.all_steps) && p.all_steps.length > 0
+        ? p.all_steps
+        : DEFAULT_CONFIGURATOR_STEPS;
+
+      const visitedUpper = new Set(visitedSteps.map((s) => String(s).trim().toUpperCase()));
+      const skippedSteps = allSteps.filter((s) => !visitedUpper.has(String(s).trim().toUpperCase()));
+
+      // 11% per visited page (e.g. 1 page = 11%, 2 pages = 22%, 9 pages = 100%)
+      const percentage = p.percentage !== undefined
+        ? Number(p.percentage)
+        : Math.min(100, Math.round((visitedSteps.length / totalSteps) * 100));
+
+      stepTracking = {
+        totalSteps,
+        percentage,
+        visitedCount: visitedSteps.length,
+        skippedCount: skippedSteps.length,
+        visitedSteps,
+        skippedSteps,
+        checkedOut: hasCheckedOut,
+        completed: Boolean(completedEvent),
+        lastStepVisited: p.step_name || (visitedSteps.length > 0 ? visitedSteps[visitedSteps.length - 1] : null),
+      };
+
+      missedSteps = {
+        count: skippedSteps.length,
+        steps: skippedSteps,
+        visitedSteps,
+        totalSteps,
+        percentage,
+        checkedOut: hasCheckedOut,
+      };
+    }
+
+    // Remove raw skipped_steps from eventParams to avoid inconsistency (stepTracking is single source of truth)
+    Object.values(orderedEvents).forEach((ev) => {
+      if (ev?.eventParams?.skipped_steps !== undefined) {
+        delete ev.eventParams.skipped_steps;
+      }
+    });
+
+    const result = {
+      ...sanitized,
+      events: orderedEvents,
+      stepTracking,
+      missedSteps,
+    };
+
+    res.status(200).json(result);
   } catch (error) {
     console.error('Error in GET /:visitorId:', error);
     res.status(500).json({ error: 'Internal Server Error' });

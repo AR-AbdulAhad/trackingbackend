@@ -4,7 +4,7 @@ import { EDUCATION_TYPES } from './src/lib/constants.js';
 const prisma = new PrismaClient();
 
 const eduTypes = EDUCATION_TYPES;
-const packages = ['premium', 'standard'];
+const packages = ['premium', 'luksus', 'standard', 'basic'];
 const products = ['graduation_cap', 'studywear', 'both'];
 const apps = ['wordpress', 'gradcap_configurator', 'studywear_configurator'];
 const configTypes = ['gradcap', 'studywear'];
@@ -53,8 +53,9 @@ async function main() {
     }
     const isReturning = visitCount > 1;
 
-    // Weights: Premium 65%, Standard 35%
-    const pkg = Math.random() < 0.65 ? 'premium' : 'standard';
+    // Weights: Premium 40%, Luksus 25%, Standard 25%, Basic 10%
+    const randPkg = Math.random();
+    const pkg = randPkg < 0.40 ? 'premium' : randPkg < 0.65 ? 'luksus' : randPkg < 0.90 ? 'standard' : 'basic';
     
     // Distribute across all 15 education types
     const edu = randItem(eduTypes);
@@ -109,11 +110,12 @@ async function main() {
             
             // Order
             const purchased = Math.random() > 0.3; // 70% of those who reach 100% purchase
+            const pkgPriceMap = { premium: 2450, luksus: 1995, standard: 449, basic: 179 };
             orders.push({
               visitorId: v.visitorId,
               configurator,
               status: purchased ? 'purchased' : 'abandoned',
-              value: purchased ? (configurator === 'gradcap' ? 1200 : 800) : null,
+              value: purchased ? (configurator === 'gradcap' ? (pkgPriceMap[v.packagePreference] || 449) : 800) : null,
               packageType: v.packagePreference,
               createdAt: new Date(reachedAt.getTime() + 50000)
             });
