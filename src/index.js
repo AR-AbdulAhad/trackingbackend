@@ -12,6 +12,8 @@ import recordingRoutes from './routes/recordings.js';
 import userRoutes from './routes/users.js';
 import './cron.js';
 
+import { setupSocketHandlers } from './lib/socketHandler.js';
+
 dotenv.config();
 
 const app = express();
@@ -29,21 +31,30 @@ const allowedOrigins = [
   'http://localhost:3000',
 ];
 
+const isOriginAllowed = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.indexOf(origin) !== -1) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return false;
+};
+
 // Socket.io server
 export const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },
 });
 
-io.on('connection', (socket) => {
-  console.log('Dashboard client connected:', socket.id);
-  socket.on('disconnect', () => {
-    console.log('Dashboard client disconnected:', socket.id);
-  });
-});
+// Setup real-time tracking & dashboard socket handlers
+setupSocketHandlers(io);
 
 // Middleware
 app.use(morgan('dev'));
@@ -51,7 +62,7 @@ app.use(express.json({ limit: '10mb' })); // increased for rrweb event batches
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

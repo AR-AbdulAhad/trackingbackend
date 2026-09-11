@@ -76,12 +76,38 @@ export const normalizePackageType = (val) => {
 
 export const DEFAULT_CONFIGURATOR_STEPS = [
   'KOKARDE',
-  'EMBLEM',
-  'BÅND',
-  'FOER',
-  'SKYGGE',
-  'HUESNOR',
+  'UDDANNELSESBÅND',
   'BRODERI',
+  'BETRÆK',
+  'SKYGGE',
+  'FOER',
+  'EKSTRABETRÆK',
   'TILBEHØR',
   'STØRRELSE',
 ];
+
+export const STEP_ALIASES = {
+  KOKARDE: ['KOKARDE'],
+  UDDANNELSESBÅND: ['UDDANNELSESBÅND', 'UDDANNELSESBAND', 'BÅND', 'BAND', 'EMBLEM'],
+  BRODERI: ['BRODERI'],
+  BETRÆK: ['BETRÆK', 'BETRAEK', 'COVER'],
+  SKYGGE: ['SKYGGE', 'SHADE'],
+  FOER: ['FOER', 'FODER', 'LINING'],
+  EKSTRABETRÆK: ['EKSTRABETRÆK', 'EKSTRABETRAEK', 'EXTRA_COVER', 'HUESNOR', 'SNOR'],
+  TILBEHØR: ['TILBEHØR', 'TILBEHOER', 'TILBEH', 'ACCESSORIES'],
+  STØRRELSE: ['STØRRELSE', 'STOERRELSE', 'SIZE'],
+};
+
+export const normalizeStepName = (val) => {
+  if (!val || typeof val !== 'string') return '';
+  const upper = val.trim().toUpperCase();
+  // Exact canonical match first
+  if (STEP_ALIASES[upper]) return upper;
+  // Then exact alias match only (no substring — "EKSTRABETRÆK".includes("BETRÆK") would wrongly match)
+  for (const [canonical, aliases] of Object.entries(STEP_ALIASES)) {
+    if (aliases.some(a => upper === a)) {
+      return canonical;
+    }
+  }
+  return upper;
+};

@@ -10,6 +10,9 @@ datasource db {
 model Visitor {
   id                 BigInt    @id @default(autoincrement())
   visitorId          String    @unique @db.Char(36)
+  name               String?
+  email              String?
+  phone              String?
   emailHash          String?   @db.Char(64)
   phoneHash          String?   @db.Char(64)
   educationType       EducationType?

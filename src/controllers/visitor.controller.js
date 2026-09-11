@@ -1,6 +1,14 @@
+import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
-import { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, DEFAULT_CONFIGURATOR_STEPS } from '../lib/constants.js';
+import { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, DEFAULT_CONFIGURATOR_STEPS, normalizeStepName } from '../lib/constants.js';
+
+// Helper: compute sha256 hash for email / phone
+export const hashValue = (val) => {
+  if (!val || typeof val !== 'string') return null;
+  const clean = val.trim().toLowerCase();
+  return crypto.createHash('sha256').update(clean).digest('hex');
+};
 
 // Helper: recursively convert all BigInt values to Number
 const sanitizeBigInt = (obj) => {
@@ -25,13 +33,22 @@ const sanitizeBigInt = (obj) => {
 
 export { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType };
 
-export const identifyVisitor = async (req, res) => {
+export const processIdentifyVisitor = async (data = {}) => {
   const {
     visitorId,
-    emailHash,
-    phoneHash,
+    name: rawName,
+    customerName,
+    email: rawEmail,
+    customerEmail,
+    phone: rawPhone,
+    customerPhone,
+    fullPhone,
+    emailHash: rawEmailHash,
+    phoneHash: rawPhoneHash,
     educationType: rawEducationType,
-    school,
+    school: rawSchool,
+    schoolName,
+    Skolenavn,
     graduationYear,
     packagePreference: rawPackagePreference,
     package: rawPackage,
@@ -39,11 +56,19 @@ export const identifyVisitor = async (req, res) => {
     pakke: rawPakke,
     productInterest: rawProductInterest,
     newSession,
-  } = req.body;
+  } = data;
 
   if (!visitorId) {
-    return res.status(400).json({ error: 'visitorId is required' });
+    throw new Error('visitorId is required');
   }
+
+  const name = (rawName || customerName || '').trim() || undefined;
+  const email = (rawEmail || customerEmail || '').trim() || undefined;
+  const phone = (rawPhone || customerPhone || fullPhone || '').trim() || undefined;
+  const school = (rawSchool || schoolName || Skolenavn || '').trim() || undefined;
+
+  const emailHash = rawEmailHash || (email ? hashValue(email) : undefined);
+  const phoneHash = rawPhoneHash || (phone ? hashValue(phone) : undefined);
 
   // Normalize educationType
   let educationType = undefined;
@@ -77,98 +102,358 @@ export const identifyVisitor = async (req, res) => {
     }
   }
 
-  try {
-    const existingVisitor = await prisma.visitor.findUnique({
-      where: { visitorId },
-    });
+  const existingVisitor = await prisma.visitor.findUnique({
+    where: { visitorId },
+  });
 
-    let isEffectivelyNew = false;
+  let isEffectivelyNew = false;
 
-    if (!existingVisitor) {
-      try {
-        const newVisitor = await prisma.visitor.create({
-          data: {
-            visitorId,
-            emailHash: emailHash !== undefined ? emailHash : null,
-            phoneHash: phoneHash !== undefined ? phoneHash : null,
-            educationType: educationType !== undefined ? educationType : null,
-            school: school !== undefined ? school : null,
-            graduationYear: parsedGradYear !== undefined ? parsedGradYear : null,
-            packagePreference: packagePreference !== undefined ? packagePreference : null,
-            productInterest: productInterest !== undefined ? productInterest : null,
-            visitCount: 1,
-            firstVisitAt: new Date(),
-            lastVisitAt: new Date(),
-            isReturning: false,
-          },
-        });
-
-        // Emit real-time notification
-        io.emit('notification', {
-          type: 'new_visitor',
-          message: `New visitor from ${school || 'unknown school'}${educationType ? ` (${educationType})` : ''}`,
+  if (!existingVisitor) {
+    try {
+      const newVisitor = await prisma.visitor.create({
+        data: {
           visitorId,
-          timestamp: new Date().toISOString(),
-        });
+          name: name !== undefined ? name : null,
+          email: email !== undefined ? email : null,
+          phone: phone !== undefined ? phone : null,
+          emailHash: emailHash !== undefined ? emailHash : null,
+          phoneHash: phoneHash !== undefined ? phoneHash : null,
+          educationType: educationType !== undefined ? educationType : null,
+          school: school !== undefined ? school : null,
+          graduationYear: parsedGradYear !== undefined ? parsedGradYear : null,
+          packagePreference: packagePreference !== undefined ? packagePreference : null,
+          productInterest: productInterest !== undefined ? productInterest : null,
+          visitCount: 1,
+          firstVisitAt: new Date(),
+          lastVisitAt: new Date(),
+          isReturning: false,
+        },
+      });
 
-        return res.status(200).json(sanitizeBigInt(newVisitor));
-      } catch (e) {
-        if (e.code === 'P2002') {
-          // Concurrently created by another request. Fall through to update.
-          isEffectivelyNew = true;
-        } else {
-          throw e;
-        }
-      }
-    } else {
-      // If it exists but was lazily created by an event moments ago
-      const ageMs = new Date().getTime() - existingVisitor.createdAt.getTime();
-      if (ageMs < 60000 && existingVisitor.isReturning === false && existingVisitor.visitCount === 1) {
-        isEffectivelyNew = true;
-      }
-    }
-
-    // Update existing visitor
-    const updatedData = {
-      lastVisitAt: new Date(),
-    };
-
-    if (emailHash !== undefined) updatedData.emailHash = emailHash;
-    if (phoneHash !== undefined) updatedData.phoneHash = phoneHash;
-    if (educationType !== undefined) updatedData.educationType = educationType;
-    if (school !== undefined) updatedData.school = school;
-    if (parsedGradYear !== undefined) updatedData.graduationYear = parsedGradYear;
-    if (packagePreference !== undefined) updatedData.packagePreference = packagePreference;
-    if (productInterest !== undefined) updatedData.productInterest = productInterest;
-
-    if (newSession && !isEffectivelyNew) {
-      updatedData.visitCount = { increment: 1 };
-    }
-
-    if (!isEffectivelyNew) {
-      updatedData.isReturning = true;
-    }
-
-    const visitor = await prisma.visitor.update({
-      where: { visitorId },
-      data: updatedData,
-    });
-
-    if (isEffectivelyNew) {
+      // Emit real-time notification
       io.emit('notification', {
         type: 'new_visitor',
-        message: `New visitor from ${visitor.school || 'unknown school'}${visitor.educationType ? ` (${visitor.educationType})` : ''}`,
+        message: `New visitor from ${school || 'unknown school'}${educationType ? ` (${educationType})` : ''}`,
         visitorId,
         timestamp: new Date().toISOString(),
       });
-    }
 
-    res.status(200).json(sanitizeBigInt(visitor));
+      io.emit('visitor:identified', sanitizeBigInt(newVisitor));
+
+      return sanitizeBigInt(newVisitor);
+    } catch (e) {
+      if (e.code === 'P2002') {
+        // Concurrently created by another request. Fall through to update.
+        isEffectivelyNew = true;
+      } else {
+        throw e;
+      }
+    }
+  } else {
+    // If it exists but was lazily created by an event moments ago
+    const ageMs = new Date().getTime() - existingVisitor.createdAt.getTime();
+    if (ageMs < 60000 && existingVisitor.isReturning === false && existingVisitor.visitCount === 1) {
+      isEffectivelyNew = true;
+    }
+  }
+
+  // Update existing visitor
+  const updatedData = {
+    lastVisitAt: new Date(),
+  };
+
+  if (name !== undefined) updatedData.name = name;
+  if (email !== undefined) updatedData.email = email;
+  if (phone !== undefined) updatedData.phone = phone;
+  if (emailHash !== undefined) updatedData.emailHash = emailHash;
+  if (phoneHash !== undefined) updatedData.phoneHash = phoneHash;
+  if (educationType !== undefined) updatedData.educationType = educationType;
+  if (school !== undefined) updatedData.school = school;
+  if (parsedGradYear !== undefined) updatedData.graduationYear = parsedGradYear;
+  if (packagePreference !== undefined) updatedData.packagePreference = packagePreference;
+  if (productInterest !== undefined) updatedData.productInterest = productInterest;
+
+  if (newSession && !isEffectivelyNew) {
+    updatedData.visitCount = { increment: 1 };
+  }
+
+  if (!isEffectivelyNew) {
+    updatedData.isReturning = true;
+  }
+
+  const visitor = await prisma.visitor.update({
+    where: { visitorId },
+    data: updatedData,
+  });
+
+  if (isEffectivelyNew) {
+    io.emit('notification', {
+      type: 'new_visitor',
+      message: `New visitor from ${visitor.school || 'unknown school'}${visitor.educationType ? ` (${visitor.educationType})` : ''}`,
+      visitorId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  io.emit('visitor:identified', sanitizeBigInt(visitor));
+
+  return sanitizeBigInt(visitor);
+};
+
+export const identifyVisitor = async (req, res) => {
+  try {
+    const result = await processIdentifyVisitor(req.body);
+    res.status(200).json(result);
   } catch (error) {
+    if (error.message === 'visitorId is required') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error in /identify:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
+/**
+ * processVisitorOrderData - Handles visitor order updates from Stripe webhooks & direct API calls
+ * Payload: { visitorId, name, email, phone, schoolName, amount, purchaseDate, ... }
+ */
+export const processVisitorOrderData = async (data = {}) => {
+  const {
+    visitorId,
+    name: rawName,
+    customerName,
+    email: rawEmail,
+    customerEmail,
+    phone: rawPhone,
+    customerPhone,
+    fullPhone,
+    schoolName,
+    school: rawSchool,
+    Skolenavn,
+    amount: rawAmount,
+    totalAmount,
+    totalPrice,
+    finalPrice,
+    value: rawValue,
+    purchaseDate: rawPurchaseDate,
+    orderDate,
+    createdAt: rawCreatedAt,
+    package: rawPackage,
+    packageName: rawPackageName,
+    packagePreference: rawPackagePreference,
+    educationType: rawEducationType,
+    program: rawProgram,
+    orderRef: rawOrderRef,
+    orderNumber,
+    configurator: rawConfigurator,
+    sourceApp: rawSourceApp,
+    currency: rawCurrency,
+  } = data;
+
+  if (!visitorId || typeof visitorId !== 'string' || !visitorId.trim()) {
+    throw new Error('visitorId is required');
+  }
+
+  const cleanVisitorId = visitorId.trim();
+  const name = (rawName || customerName || '').trim() || undefined;
+  const email = (rawEmail || customerEmail || '').trim() || undefined;
+  const phone = (rawPhone || customerPhone || fullPhone || '').trim() || undefined;
+  const school = (schoolName || rawSchool || Skolenavn || '').trim() || undefined;
+
+  // Numerical amount parsing
+  const rawNum = rawAmount ?? totalAmount ?? totalPrice ?? finalPrice ?? rawValue;
+  const parsedAmount = rawNum !== undefined && rawNum !== null && rawNum !== '' ? Number(rawNum) : null;
+  const amount = parsedAmount !== null && !isNaN(parsedAmount) ? parsedAmount : null;
+
+  // Date parsing
+  const dateVal = rawPurchaseDate || orderDate || rawCreatedAt;
+  let purchaseDate = new Date();
+  if (dateVal) {
+    const d = new Date(dateVal);
+    if (!isNaN(d.getTime())) {
+      purchaseDate = d;
+    }
+  }
+
+  // Normalizations
+  const packagePreference = normalizePackageType(rawPackagePreference ?? rawPackage ?? rawPackageName);
+  const educationType = normalizeEducationType(rawEducationType ?? rawProgram);
+  const orderRef = (rawOrderRef || orderNumber || `ORDER-${Date.now()}`).trim();
+  const configurator = rawConfigurator || (rawSourceApp === 'studywear_configurator' ? 'studywear' : 'gradcap');
+  const currency = (rawCurrency || 'DKK').toUpperCase();
+
+  // SHA256 hashes
+  const emailHash = email ? hashValue(email) : undefined;
+  const phoneHash = phone ? hashValue(phone) : undefined;
+
+  // 1. Find or create visitor
+  let visitor = await prisma.visitor.findUnique({
+    where: { visitorId: cleanVisitorId },
+  });
+
+  if (!visitor) {
+    visitor = await prisma.visitor.create({
+      data: {
+        visitorId: cleanVisitorId,
+        name: name || null,
+        email: email || null,
+        phone: phone || null,
+        emailHash: emailHash || null,
+        phoneHash: phoneHash || null,
+        school: school || null,
+        educationType: educationType || null,
+        packagePreference: packagePreference || null,
+        visitCount: 1,
+        firstVisitAt: purchaseDate,
+        lastVisitAt: new Date(),
+        isReturning: false,
+      }
+    });
+  } else {
+    // Update existing visitor data
+    const updatePayload = {
+      lastVisitAt: new Date(),
+    };
+    if (name !== undefined) updatePayload.name = name;
+    if (email !== undefined) updatePayload.email = email;
+    if (phone !== undefined) updatePayload.phone = phone;
+    if (emailHash !== undefined) updatePayload.emailHash = emailHash;
+    if (phoneHash !== undefined) updatePayload.phoneHash = phoneHash;
+    if (school !== undefined) updatePayload.school = school;
+    if (educationType !== undefined) updatePayload.educationType = educationType;
+    if (packagePreference !== undefined) updatePayload.packagePreference = packagePreference;
+
+    visitor = await prisma.visitor.update({
+      where: { visitorId: cleanVisitorId },
+      data: updatePayload,
+    });
+  }
+
+  // 2. Create Order in database
+  const order = await prisma.order.create({
+    data: {
+      visitorId: cleanVisitorId,
+      configurator,
+      status: 'purchased',
+      value: amount,
+      currency,
+      packageType: packagePreference || null,
+      orderRef: orderRef || null,
+      createdAt: purchaseDate,
+    }
+  });
+
+  // 3. Upsert purchase_completed Event
+  const stepEvent = await prisma.event.findUnique({
+    where: {
+      visitorId_eventName: { visitorId: cleanVisitorId, eventName: 'configurator_step_view' },
+    },
+  });
+
+  const stepParams = stepEvent?.eventParams || {};
+  const purchaseEventParams = {
+    ...stepParams,
+    value: amount,
+    currency,
+    package: packagePreference || rawPackage || rawPackageName,
+    program: educationType || rawProgram,
+    school: school || visitor.school,
+    customer_name: name || visitor.name,
+    customer_email: email || visitor.email,
+    customer_phone: phone || visitor.phone,
+    order_ref: orderRef,
+    purchase_date: purchaseDate.toISOString(),
+    checked_out: true,
+    percentage: 100,
+  };
+
+  const sourceApp = configurator === 'studywear' ? 'studywear_configurator' : 'gradcap_configurator';
+
+  await prisma.event.upsert({
+    where: {
+      visitorId_eventName: {
+        visitorId: cleanVisitorId,
+        eventName: 'purchase_completed',
+      },
+    },
+    update: {
+      sourceApp,
+      eventParams: purchaseEventParams,
+    },
+    create: {
+      visitorId: cleanVisitorId,
+      eventName: 'purchase_completed',
+      sourceApp,
+      eventParams: purchaseEventParams,
+    },
+  });
+
+  // 4. Milestone 100% completion in ConfiguratorProgress
+  try {
+    for (const milestone of ['started', 'm25', 'm50', 'm75', 'm100']) {
+      await prisma.configuratorProgress.upsert({
+        where: {
+          visitorId_configurator_milestone: {
+            visitorId: cleanVisitorId,
+            configurator,
+            milestone,
+          }
+        },
+        update: {},
+        create: {
+          visitorId: cleanVisitorId,
+          configurator,
+          milestone,
+          reachedAt: purchaseDate
+        }
+      });
+    }
+  } catch (progressErr) {
+    console.warn('Progress milestone upsert warning:', progressErr.message);
+  }
+
+  // 5. Emit real-time dashboard updates via Socket.IO
+  try {
+    io.emit('visitor:identified', sanitizeBigInt(visitor));
+    io.emit('event:tracked', {
+      visitorId: cleanVisitorId,
+      eventName: 'purchase_completed',
+      eventParams: purchaseEventParams,
+      sourceApp,
+      timestamp: new Date().toISOString(),
+    });
+    io.emit('notification', {
+      type: 'new_conversion',
+      message: `Order completed for ${name || visitor.name || cleanVisitorId}${amount ? ` (${amount} ${currency})` : ''}${school || visitor.school ? ` - ${school || visitor.school}` : ''}`,
+      visitorId: cleanVisitorId,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (socketErr) {
+    console.warn('Socket emit warning:', socketErr.message);
+  }
+
+  return {
+    success: true,
+    message: 'Visitor order data processed successfully',
+    visitor: sanitizeBigInt(visitor),
+    order: sanitizeBigInt(order),
+  };
+};
+
+export const updateVisitorOrderData = async (req, res) => {
+  try {
+    const result = await processVisitorOrderData(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    if (error.message === 'visitorId is required') {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('Error in /order-data:', error);
+    res.status(500).json({ error: 'Internal Server Error', message: error.message });
+  }
+};
+
+export const getVisitorOrderData = updateVisitorOrderData;
 
 // Defined order for configurator events
 const EVENT_ORDER = [
@@ -235,18 +520,19 @@ export const getVisitor = async (req, res) => {
 
     if (primaryParams) {
       const p = primaryParams;
-      const visitedSteps = Array.isArray(p.visited_steps) 
+      const rawVisited = Array.isArray(p.visited_steps) 
         ? p.visited_steps 
         : (p.step_name ? [p.step_name] : []);
-
-      const totalSteps = Number(p.total_steps) || DEFAULT_CONFIGURATOR_STEPS.length;
+      const visitedSteps = Array.from(new Set(rawVisited.map(normalizeStepName).filter(Boolean)));
 
       const allSteps = Array.isArray(p.all_steps) && p.all_steps.length > 0
-        ? p.all_steps
+        ? Array.from(new Set(p.all_steps.map(normalizeStepName).filter(Boolean)))
         : DEFAULT_CONFIGURATOR_STEPS;
 
-      const visitedUpper = new Set(visitedSteps.map((s) => String(s).trim().toUpperCase()));
-      const skippedSteps = allSteps.filter((s) => !visitedUpper.has(String(s).trim().toUpperCase()));
+      const totalSteps = Number(p.total_steps) || allSteps.length;
+
+      const visitedNorm = new Set(visitedSteps.map(normalizeStepName));
+      const skippedSteps = allSteps.filter((s) => !visitedNorm.has(normalizeStepName(s)));
 
       // 11% per visited page (e.g. 1 page = 11%, 2 pages = 22%, 9 pages = 100%)
       const percentage = p.percentage !== undefined
