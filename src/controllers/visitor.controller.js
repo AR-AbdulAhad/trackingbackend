@@ -510,7 +510,12 @@ export const getVisitor = async (req, res) => {
     const stepViewEvent = rawEventsMap['configurator_step_view'];
     const completedEvent = rawEventsMap['configurator_completed'];
     const checkoutEvent = rawEventsMap['checkout_started'] || rawEventsMap['purchase_completed'] || rawEventsMap['add_to_cart'];
-    const hasCheckedOut = Boolean(checkoutEvent || (Array.isArray(sanitized.orders) && sanitized.orders.length > 0));
+    const hasPurchased = Boolean(
+      (Array.isArray(sanitized.orders) && sanitized.orders.some(o => o.status === 'purchased')) ||
+      rawEventsMap['purchase_completed']
+    );
+    const hasCheckedOut = Boolean(checkoutEvent || hasPurchased || (Array.isArray(sanitized.orders) && sanitized.orders.length > 0));
+    const isCompleted = Boolean(completedEvent || hasPurchased);
 
     // Choose primary source for step params
     const primaryParams = stepViewEvent?.eventParams || completedEvent?.eventParams || checkoutEvent?.eventParams || null;
@@ -535,9 +540,10 @@ export const getVisitor = async (req, res) => {
       const skippedSteps = allSteps.filter((s) => !visitedNorm.has(normalizeStepName(s)));
 
       // 11% per visited page (e.g. 1 page = 11%, 2 pages = 22%, 9 pages = 100%)
-      const percentage = p.percentage !== undefined
+      const rawPct = p.percentage !== undefined
         ? Number(p.percentage)
         : Math.min(100, Math.round((visitedSteps.length / totalSteps) * 100));
+      const percentage = hasPurchased ? 100 : rawPct;
 
       stepTracking = {
         totalSteps,
@@ -547,7 +553,8 @@ export const getVisitor = async (req, res) => {
         visitedSteps,
         skippedSteps,
         checkedOut: hasCheckedOut,
-        completed: Boolean(completedEvent),
+        hasPurchased,
+        completed: isCompleted,
         lastStepVisited: p.step_name || (visitedSteps.length > 0 ? visitedSteps[visitedSteps.length - 1] : null),
       };
 
@@ -558,6 +565,8 @@ export const getVisitor = async (req, res) => {
         totalSteps,
         percentage,
         checkedOut: hasCheckedOut,
+        hasPurchased,
+        completed: isCompleted,
       };
     }
 

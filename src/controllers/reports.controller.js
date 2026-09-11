@@ -93,6 +93,14 @@ export const getConfiguratorFunnel = async (req, res) => {
   }
 };
 
+const MILESTONE_WEIGHTS = {
+  started: 1,
+  m25: 2,
+  m50: 3,
+  m75: 4,
+  m100: 5,
+};
+
 export const getExitPoints = async (req, res) => {
   try {
     const { configurator, from, to } = req.query;
@@ -102,16 +110,21 @@ export const getExitPoints = async (req, res) => {
 
     const progress = await prisma.configuratorProgress.findMany({
       where: whereClause,
-      orderBy: { reachedAt: 'desc' }
+      orderBy: { reachedAt: 'asc' }
     });
 
-    const latestPerVisitor = {};
+    const furthestPerVisitor = {};
     progress.forEach(p => {
-      if (!latestPerVisitor[p.visitorId]) latestPerVisitor[p.visitorId] = p.milestone;
+      const current = furthestPerVisitor[p.visitorId];
+      const currentWeight = current ? (MILESTONE_WEIGHTS[current] || 0) : 0;
+      const newWeight = MILESTONE_WEIGHTS[p.milestone] || 0;
+      if (newWeight > currentWeight) {
+        furthestPerVisitor[p.visitorId] = p.milestone;
+      }
     });
 
     const exits = { started: 0, m25: 0, m50: 0, m75: 0, m100: 0 };
-    Object.values(latestPerVisitor).forEach(m => {
+    Object.values(furthestPerVisitor).forEach(m => {
       if (exits[m] !== undefined) exits[m]++;
     });
 
@@ -317,7 +330,14 @@ export const getEntryRate = async (req, res) => {
 
 export const getAudienceGrowth = async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const dateFilter = getDateFilter(from, to);
+    const where = Object.keys(dateFilter).length > 0 ? {
+      firstVisitAt: dateFilter
+    } : {};
+
     const visitors = await prisma.visitor.findMany({
+      where,
       orderBy: { firstVisitAt: 'asc' }
     });
 
@@ -437,16 +457,27 @@ export const getVisitors = async (req, res) => {
         take: Number(limit),
         orderBy: { lastVisitAt: 'desc' },
         include: {
+          orders: {
+            where: { status: 'purchased' },
+            select: { id: true, value: true, currency: true, status: true, orderRef: true, createdAt: true }
+          },
           _count: { select: { orders: true, sessions: true } }
         }
       }),
       prisma.visitor.count({ where })
     ]);
 
-    const safeVisitors = visitors.map(v => ({
-      ...v,
-      id: Number(v.id)
-    }));
+    const safeVisitors = visitors.map(v => {
+      const ordersList = v.orders || [];
+      const totalSpent = ordersList.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+      return {
+        ...v,
+        id: Number(v.id),
+        orders: ordersList.map(o => ({ ...o, id: Number(o.id) })),
+        totalSpent,
+        currency: ordersList[0]?.currency || 'DKK',
+      };
+    });
 
     res.json({
       visitors: safeVisitors,
