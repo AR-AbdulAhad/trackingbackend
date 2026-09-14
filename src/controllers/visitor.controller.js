@@ -462,6 +462,9 @@ const EVENT_ORDER = [
   'configurator_progress',
   'configurator_completed',
   'configurator_abandoned',
+  'iframe_crash',
+  'iframe_stuck',
+  'playcanvas_crash',
 ];
 
 export const getVisitor = async (req, res) => {

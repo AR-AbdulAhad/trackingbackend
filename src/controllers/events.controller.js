@@ -242,6 +242,17 @@ export const processTrackEvent = async (data = {}, context = {}) => {
         visitorId,
         timestamp: new Date().toISOString(),
       });
+    } else if (eventName === 'iframe_crash' || eventName === 'iframe_stuck' || eventName === 'playcanvas_crash') {
+      const errType = finalEventParams?.error_type === 'stuck' ? 'Stuck' : 'Crash';
+      const appName = sourceApp || finalEventParams?.source_app || 'gradcap_configurator';
+      const prog = finalEventParams?.program ? ` (${finalEventParams.program})` : '';
+      io.emit('notification', {
+        type: 'iframe_crash',
+        message: `3D Iframe ${errType} in ${appName}${prog}`,
+        visitorId,
+        errorDetails: finalEventParams,
+        timestamp: new Date().toISOString(),
+      });
     }
   } catch (emitErr) {
     console.warn('Failed to emit real-time event on io:', emitErr.message);

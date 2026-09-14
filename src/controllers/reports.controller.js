@@ -461,6 +461,12 @@ export const getVisitors = async (req, res) => {
             where: { status: 'purchased' },
             select: { id: true, value: true, currency: true, status: true, orderRef: true, createdAt: true }
           },
+          events: {
+            where: {
+              eventName: { in: ['iframe_crash', 'iframe_stuck', 'playcanvas_crash'] }
+            },
+            select: { id: true, eventName: true, eventParams: true, createdAt: true }
+          },
           _count: { select: { orders: true, sessions: true } }
         }
       }),
@@ -469,11 +475,15 @@ export const getVisitors = async (req, res) => {
 
     const safeVisitors = visitors.map(v => {
       const ordersList = v.orders || [];
+      const crashEvents = v.events || [];
       const totalSpent = ordersList.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
       return {
         ...v,
         id: Number(v.id),
         orders: ordersList.map(o => ({ ...o, id: Number(o.id) })),
+        events: crashEvents.map(e => ({ ...e, id: Number(e.id) })),
+        hasCrash: crashEvents.length > 0,
+        crashCount: crashEvents.length,
         totalSpent,
         currency: ordersList[0]?.currency || 'DKK',
       };
