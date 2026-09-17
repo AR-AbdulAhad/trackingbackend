@@ -329,19 +329,41 @@ export const processVisitorOrderData = async (data = {}) => {
     });
   }
 
-  // 2. Create Order in database
-  const order = await prisma.order.create({
-    data: {
-      visitorId: cleanVisitorId,
-      configurator,
-      status: 'purchased',
-      value: amount,
-      currency,
-      packageType: packagePreference || null,
-      orderRef: orderRef || null,
-      createdAt: purchaseDate,
-    }
-  });
+  // 2. Create or Update Order in database
+  let order;
+  if (orderRef) {
+    order = await prisma.order.findFirst({
+      where: {
+        visitorId: cleanVisitorId,
+        orderRef: String(orderRef)
+      }
+    });
+  }
+
+  if (order) {
+    order = await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'purchased',
+        value: amount !== undefined && amount !== null ? amount : order.value,
+        currency: currency || order.currency,
+        packageType: packagePreference || order.packageType,
+      }
+    });
+  } else {
+    order = await prisma.order.create({
+      data: {
+        visitorId: cleanVisitorId,
+        configurator,
+        status: 'purchased',
+        value: amount,
+        currency,
+        packageType: packagePreference || null,
+        orderRef: orderRef ? String(orderRef) : null,
+        createdAt: purchaseDate,
+      }
+    });
+  }
 
   // 3. Upsert purchase_completed Event
   const stepEvent = await prisma.event.findUnique({
@@ -512,10 +534,11 @@ export const getVisitor = async (req, res) => {
     // --- Compute stepTracking & missedSteps from step views / checkout events ---
     const stepViewEvent = rawEventsMap['configurator_step_view'];
     const completedEvent = rawEventsMap['configurator_completed'];
-    const checkoutEvent = rawEventsMap['checkout_started'] || rawEventsMap['purchase_completed'] || rawEventsMap['add_to_cart'];
+    const checkoutEvent = rawEventsMap['checkout_started'] || rawEventsMap['purchase_completed'] || rawEventsMap['purchase'] || rawEventsMap['add_to_cart'];
     const hasPurchased = Boolean(
       (Array.isArray(sanitized.orders) && sanitized.orders.some(o => o.status === 'purchased')) ||
-      rawEventsMap['purchase_completed']
+      rawEventsMap['purchase_completed'] ||
+      rawEventsMap['purchase']
     );
     const hasCheckedOut = Boolean(checkoutEvent || hasPurchased || (Array.isArray(sanitized.orders) && sanitized.orders.length > 0));
     const isCompleted = Boolean(completedEvent || hasPurchased);

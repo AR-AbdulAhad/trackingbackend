@@ -84,7 +84,7 @@ export const processTrackEvent = async (data = {}, context = {}) => {
       percentage: calculatedPct,
       all_steps: allSteps,
     };
-  } else if (['configurator_completed', 'checkout_started', 'purchase_completed', 'add_to_cart'].includes(eventName)) {
+  } else if (['configurator_completed', 'checkout_started', 'purchase_completed', 'purchase', 'add_to_cart'].includes(eventName)) {
     // Carry forward visited/skipped step breakdown to checkout & order events
     const stepEvent = await prisma.event.findUnique({
       where: {
@@ -189,33 +189,66 @@ export const processTrackEvent = async (data = {}, context = {}) => {
     }
   }
 
-  // 3. Handle commerce events (add_to_cart, checkout_started, purchase_completed)
-  const commerceEvents = ['add_to_cart', 'checkout_started', 'purchase_completed'];
+  // 3. Handle commerce events (add_to_cart, checkout_started, purchase_completed, purchase)
+  const commerceEvents = ['add_to_cart', 'checkout_started', 'purchase_completed', 'purchase'];
+  let isAlreadyPurchased = false;
+
   if (commerceEvents.includes(eventName) && configurator) {
     const statusMap = {
       'add_to_cart': 'cart',
       'checkout_started': 'checkout_started',
-      'purchase_completed': 'purchased'
+      'purchase_completed': 'purchased',
+      'purchase': 'purchased'
     };
 
-    await prisma.order.create({
-      data: {
-        visitorId,
-        configurator,
-        status: statusMap[eventName],
-        value: eventParams?.value || null,
-        currency: eventParams?.currency || 'DKK',
-        packageType: normalizePackageType(eventParams?.package || eventParams?.packageType || eventParams?.packageName || eventParams?.pakke),
-        orderRef: eventParams?.order_ref || null,
-      }
-    });
+    const targetStatus = statusMap[eventName];
+    const orderRef = eventParams?.order_ref || eventParams?.transaction_id || null;
 
-    // Fire and forget Meta CAPI + GA4
-    const clientIp = context.clientIp;
-    const userAgent = context.userAgent;
-    
-    sendMetaEvent(eventName, visitorId, eventParams, clientIp, userAgent).catch(console.error);
-    sendGA4Event(eventName, visitorId, eventParams).catch(console.error);
+    let existingOrder = null;
+    if (orderRef) {
+      existingOrder = await prisma.order.findFirst({
+        where: {
+          visitorId,
+          orderRef: String(orderRef)
+        }
+      });
+    }
+
+    if (existingOrder) {
+      isAlreadyPurchased = existingOrder.status === 'purchased';
+
+      // Update existing order status if transitioned (e.g. from checkout_started to purchased)
+      await prisma.order.update({
+        where: { id: existingOrder.id },
+        data: {
+          status: targetStatus,
+          value: eventParams?.value !== undefined && eventParams?.value !== null ? eventParams.value : existingOrder.value,
+          currency: eventParams?.currency || existingOrder.currency,
+          packageType: normalizePackageType(eventParams?.package || eventParams?.packageType || eventParams?.packageName || eventParams?.pakke) || existingOrder.packageType,
+        }
+      });
+    } else {
+      await prisma.order.create({
+        data: {
+          visitorId,
+          configurator,
+          status: targetStatus,
+          value: eventParams?.value || null,
+          currency: eventParams?.currency || 'DKK',
+          packageType: normalizePackageType(eventParams?.package || eventParams?.packageType || eventParams?.packageName || eventParams?.pakke),
+          orderRef: orderRef ? String(orderRef) : null,
+        }
+      });
+    }
+
+    // Fire and forget Meta CAPI + GA4 only for new purchases or state changes
+    if (!isAlreadyPurchased) {
+      const clientIp = context.clientIp;
+      const userAgent = context.userAgent;
+      
+      sendMetaEvent(eventName, visitorId, eventParams, clientIp, userAgent).catch(console.error);
+      sendGA4Event(eventName, visitorId, eventParams).catch(console.error);
+    }
   }
 
   // Emit real-time socket events to connected dashboard clients
@@ -228,7 +261,7 @@ export const processTrackEvent = async (data = {}, context = {}) => {
       timestamp: new Date().toISOString(),
     });
 
-    if (eventName === 'purchase_completed') {
+    if ((eventName === 'purchase_completed' || eventName === 'purchase') && !isAlreadyPurchased) {
       io.emit('notification', {
         type: 'new_conversion',
         message: `Order completed for ${eventParams?.package || 'cap'} (${eventParams?.value || ''} DKK)`,

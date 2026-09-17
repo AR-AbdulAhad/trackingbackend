@@ -19,7 +19,7 @@ export const sendMetaEvent = async (
   let metaEventName = eventName;
   if (eventName === 'add_to_cart') metaEventName = 'AddToCart';
   if (eventName === 'checkout_started') metaEventName = 'InitiateCheckout';
-  if (eventName === 'purchase_completed') metaEventName = 'Purchase';
+  if (eventName === 'purchase_completed' || eventName === 'purchase') metaEventName = 'Purchase';
 
   const externalId = crypto.createHash('sha256').update(visitorId.trim().toLowerCase()).digest('hex');
   
