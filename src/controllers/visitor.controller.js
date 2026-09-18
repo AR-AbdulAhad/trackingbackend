@@ -1,43 +1,17 @@
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
-import { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, DEFAULT_CONFIGURATOR_STEPS, normalizeStepName } from '../lib/constants.js';
+import { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, DEFAULT_CONFIGURATOR_STEPS, normalizeStepName, hashValue, sanitizeBigInt } from '../lib/constants.js';
 
-// Helper: compute sha256 hash for email / phone
-export const hashValue = (val) => {
-  if (!val || typeof val !== 'string') return null;
-  const clean = val.trim().toLowerCase();
-  return crypto.createHash('sha256').update(clean).digest('hex');
-};
-
-// Helper: recursively convert all BigInt values to Number
-const sanitizeBigInt = (obj) => {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === 'bigint') return Number(obj);
-  if (obj instanceof Date) return obj;
-  if (obj && typeof obj.toNumber === 'function') return obj.toNumber();
-  if (Array.isArray(obj)) return obj.map(sanitizeBigInt);
-  if (typeof obj === 'object') {
-    if ('s' in obj && 'e' in obj && 'd' in obj && Array.isArray(obj.d)) {
-      const numStr = obj.d.join('');
-      return Number(obj.s * Number(numStr) * Math.pow(10, obj.e - numStr.length + 1));
-    }
-    const result = {};
-    for (const [k, v] of Object.entries(obj)) {
-      result[k] = sanitizeBigInt(v);
-    }
-    return result;
-  }
-  return obj;
-};
-
-export { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType };
+export { EDUCATION_TYPES, normalizeEducationType, PACKAGE_TYPES, normalizePackageType, hashValue, sanitizeBigInt };
 
 export const processIdentifyVisitor = async (data = {}) => {
   const {
     visitorId,
     name: rawName,
     customerName,
+    firstName: rawFirstName,
+    lastName: rawLastName,
     email: rawEmail,
     customerEmail,
     phone: rawPhone,
@@ -62,7 +36,8 @@ export const processIdentifyVisitor = async (data = {}) => {
     throw new Error('visitorId is required');
   }
 
-  const name = (rawName || customerName || '').trim() || undefined;
+  const combinedName = (rawFirstName || rawLastName) ? `${rawFirstName || ''} ${rawLastName || ''}`.trim() : '';
+  const name = (rawName || customerName || combinedName || '').trim() || undefined;
   const email = (rawEmail || customerEmail || '').trim() || undefined;
   const phone = (rawPhone || customerPhone || fullPhone || '').trim() || undefined;
   const school = (rawSchool || schoolName || Skolenavn || '').trim() || undefined;

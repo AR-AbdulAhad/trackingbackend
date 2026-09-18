@@ -23,16 +23,33 @@ export const sendMetaEvent = async (
 
   const externalId = crypto.createHash('sha256').update(visitorId.trim().toLowerCase()).digest('hex');
   
+  const hashField = (val) => {
+    if (!val || typeof val !== 'string') return null;
+    return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
+  };
+
   const userData = {
     client_ip_address: reqIp,
     client_user_agent: reqUserAgent,
     external_id: [externalId],
   };
 
-  // Only hash email if consent is given
-  if (eventParams.consentGiven && eventParams.email) {
-    userData.em = [crypto.createHash('sha256').update(eventParams.email.trim().toLowerCase()).digest('hex')];
+  const rawEm = eventParams.email || eventParams.customerEmail;
+  if (rawEm) {
+    userData.em = [hashField(rawEm)];
   }
+
+  const rawPh = eventParams.phone || eventParams.customerPhone || eventParams.fullPhone;
+  if (rawPh) {
+    const cleanPh = String(rawPh).replace(/[^0-9]/g, '');
+    if (cleanPh) userData.ph = [crypto.createHash('sha256').update(cleanPh).digest('hex')];
+  }
+
+  if (eventParams.firstName) userData.fn = [hashField(eventParams.firstName)];
+  if (eventParams.lastName) userData.ln = [hashField(eventParams.lastName)];
+  if (eventParams.city) userData.ct = [hashField(eventParams.city)];
+  if (eventParams.postalCode) userData.zp = [hashField(String(eventParams.postalCode))];
+  if (eventParams.country) userData.country = [hashField(eventParams.country.toLowerCase() === 'denmark' ? 'dk' : eventParams.country)];
 
   const customData = {};
   if (eventParams.value) customData.value = parseFloat(eventParams.value);

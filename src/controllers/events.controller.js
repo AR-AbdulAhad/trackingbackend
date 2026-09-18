@@ -2,7 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import { io } from '../index.js';
 import { sendMetaEvent } from '../lib/metaCapi.js';
 import { sendGA4Event } from '../lib/ga4.js';
-import { normalizePackageType, normalizeEducationType, DEFAULT_CONFIGURATOR_STEPS, normalizeStepName } from '../lib/constants.js';
+import { normalizePackageType, normalizeEducationType, DEFAULT_CONFIGURATOR_STEPS, normalizeStepName, hashValue, sanitizeBigInt } from '../lib/constants.js';
 
 export const processTrackEvent = async (data = {}, context = {}) => {
   const { visitorId, eventName, eventParams, sourceApp } = data;
@@ -127,16 +127,61 @@ export const processTrackEvent = async (data = {}, context = {}) => {
   });
 
   // Sync visitor attributes if provided in eventParams
-  const pkg = normalizePackageType(eventParams?.package || eventParams?.packageType || eventParams?.packageName || eventParams?.pakke);
+  const pkg = normalizePackageType(eventParams?.package || eventParams?.packageType || eventParams?.packageName || eventParams?.pakke || eventParams?.packagePreference);
   const edu = normalizeEducationType(eventParams?.educationType || eventParams?.program);
-  if (pkg || edu) {
-    const visitorUpdate = {};
-    if (pkg) visitorUpdate.packagePreference = pkg;
-    if (edu) visitorUpdate.educationType = edu;
-    await prisma.visitor.update({
-      where: { visitorId },
-      data: visitorUpdate
-    }).catch(() => {});
+  
+  const visitorUpdate = {};
+  if (pkg) visitorUpdate.packagePreference = pkg;
+  if (edu) visitorUpdate.educationType = edu;
+
+  const rawEmail = eventParams?.email || eventParams?.customerEmail;
+  if (rawEmail && typeof rawEmail === 'string' && rawEmail.trim()) {
+    const cleanEmail = rawEmail.trim().toLowerCase();
+    visitorUpdate.email = cleanEmail;
+    visitorUpdate.emailHash = hashValue(cleanEmail);
+  }
+
+  const rawPhone = eventParams?.phone || eventParams?.customerPhone || eventParams?.fullPhone;
+  if (rawPhone && typeof rawPhone === 'string' && rawPhone.trim()) {
+    const cleanPhone = rawPhone.trim();
+    visitorUpdate.phone = cleanPhone;
+    visitorUpdate.phoneHash = hashValue(cleanPhone);
+  }
+
+  const rawSchool = eventParams?.school || eventParams?.schoolName || eventParams?.Skolenavn;
+  if (rawSchool && typeof rawSchool === 'string' && rawSchool.trim()) {
+    visitorUpdate.school = rawSchool.trim();
+  }
+
+  const rawName = eventParams?.name || eventParams?.customerName ||
+    (eventParams?.firstName || eventParams?.lastName 
+      ? `${eventParams.firstName || ''} ${eventParams.lastName || ''}`.trim() 
+      : null);
+  if (rawName && typeof rawName === 'string' && rawName.trim()) {
+    visitorUpdate.name = rawName.trim();
+  }
+
+  if (eventParams?.graduationYear) {
+    const gy = parseInt(eventParams.graduationYear, 10);
+    if (!isNaN(gy)) visitorUpdate.graduationYear = gy;
+  }
+
+  if (Object.keys(visitorUpdate).length > 0) {
+    try {
+      const updatedVisitor = await prisma.visitor.update({
+        where: { visitorId },
+        data: {
+          ...visitorUpdate,
+          lastVisitAt: new Date(),
+        }
+      });
+      if (updatedVisitor) {
+        io.emit('visitor:identified', sanitizeBigInt(updatedVisitor));
+        io.emit('visitor:updated', sanitizeBigInt(updatedVisitor));
+      }
+    } catch (err) {
+      console.warn(`[Events] Failed to sync visitor info for ${visitorId}:`, err.message);
+    }
   }
 
   // Determine configurator based on sourceApp

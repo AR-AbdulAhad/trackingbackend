@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 export const EDUCATION_TYPES = [
   'STX',
   'HTX',
@@ -110,4 +111,32 @@ export const normalizeStepName = (val) => {
     }
   }
   return upper;
+};
+
+// Helper: compute sha256 hash for email / phone
+export const hashValue = (val) => {
+  if (!val || typeof val !== 'string') return null;
+  const clean = val.trim().toLowerCase();
+  return crypto.createHash('sha256').update(clean).digest('hex');
+};
+
+// Helper: recursively convert all BigInt values to Number
+export const sanitizeBigInt = (obj) => {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return Number(obj);
+  if (obj instanceof Date) return obj;
+  if (obj && typeof obj.toNumber === 'function') return obj.toNumber();
+  if (Array.isArray(obj)) return obj.map(sanitizeBigInt);
+  if (typeof obj === 'object') {
+    if ('s' in obj && 'e' in obj && 'd' in obj && Array.isArray(obj.d)) {
+      const numStr = obj.d.join('');
+      return Number(obj.s * Number(numStr) * Math.pow(10, obj.e - numStr.length + 1));
+    }
+    const result = {};
+    for (const [k, v] of Object.entries(obj)) {
+      result[k] = sanitizeBigInt(v);
+    }
+    return result;
+  }
+  return obj;
 };
