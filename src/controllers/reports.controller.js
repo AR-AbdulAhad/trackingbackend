@@ -1,5 +1,4 @@
 import { prisma } from '../lib/prisma.js';
-import { io } from '../index.js';
 import { normalizeEducationType, EDUCATION_TYPES } from '../lib/constants.js';
 
 // Helper for date filtering

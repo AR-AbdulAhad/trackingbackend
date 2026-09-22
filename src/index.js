@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.js';
 import reportRoutes from './routes/reports.js';
 import recordingRoutes from './routes/recordings.js';
 import userRoutes from './routes/users.js';
+import gaRoutes from './routes/ga.js';
 import './cron.js';
 
 import { setupSocketHandlers } from './lib/socketHandler.js';
@@ -78,6 +79,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/recordings', recordingRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/ga', gaRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
