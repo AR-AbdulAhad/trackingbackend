@@ -78,8 +78,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
 }));
 
-app.options('*', cors());
-
 // Routes
 app.use('/api/visitor', visitorRoutes);
 app.use('/api/events', eventRoutes);
