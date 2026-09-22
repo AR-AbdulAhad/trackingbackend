@@ -33,17 +33,19 @@ export const io = new Server(httpServer, {
 // Setup real-time tracking & dashboard socket handlers
 setupSocketHandlers(io);
 
-// Middleware
-app.use(morgan('dev'));
-app.use(express.json({ limit: '10mb' })); // increased for rrweb event batches
-
-// Allow ALL origins (wildcard dynamic access)
-app.use(cors({
+// CORS Middleware (Placed at top before body parsers)
+const corsMiddleware = cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-}));
+});
+
+app.use(corsMiddleware);
+app.options(/.*/, corsMiddleware); // Explicit preflight handler (Express 5 compatible)
+
+app.use(morgan('dev'));
+app.use(express.json({ limit: '10mb' })); // increased for rrweb event batches
 
 // Routes
 app.use('/api/visitor', visitorRoutes);
