@@ -21,38 +21,10 @@ const app = express();
 const httpServer = createServer(app);
 const port = process.env.PORT || 3000;
 
-// CORS config
-const allowedOrigins = [
-  'https://studentlife.dk',
-  'https://studenterhue.studentlife.dk',
-  'https://cloth.studentlife.dk',
-  'https://trackingdashboard.studentlife.dk',
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:3000',
-];
-
-const isOriginAllowed = (origin) => {
-  if (!origin) return true; // allow non-browser or same-origin requests
-  if (allowedOrigins.indexOf(origin) !== -1) return true;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-  if (/^https?:\/\/([a-zA-Z0-9-]+\.)*studentlife\.dk(:\d+)?$/.test(origin)) return true;
-  return false;
-};
-
 // Socket.io server
 export const io = new Server(httpServer, {
   cors: {
-    origin: (origin, callback) => {
-      if (isOriginAllowed(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, false);
-      }
-    },
+    origin: true,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -65,14 +37,9 @@ setupSocketHandlers(io);
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' })); // increased for rrweb event batches
 
+// Allow ALL origins (wildcard dynamic access)
 app.use(cors({
-  origin: function (origin, callback) {
-    if (isOriginAllowed(origin)) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
