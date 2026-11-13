@@ -29,14 +29,18 @@ export const getAudienceOverview = async (req, res) => {
     } : {};
 
     const visitors = await prisma.visitor.findMany({
-      where: whereVisitor
+      where: whereVisitor,
+      include: {
+        _count: { select: { sessions: true, events: true, orders: true, progress: true } }
+      }
     });
 
     const byEducation = {};
     EDUCATION_TYPES.forEach(t => {
       byEducation[t] = 0;
     });
-    const bySchool = {};
+    const bySchool = Object.create(null);
+    let withSchool = 0;
     const byGradYear = {};
     const byPackage = { premium: 0, luksus: 0, standard: 0, basic: 0 };
 
@@ -44,14 +48,28 @@ export const getAudienceOverview = async (req, res) => {
       if (v.educationType && byEducation[v.educationType] !== undefined) {
         byEducation[v.educationType]++;
       }
-      if (v.school) bySchool[v.school] = (bySchool[v.school] || 0) + 1;
+      // A school profile alone is not engagement: require recorded visitor data.
+      const school = v.school?.trim();
+      const hasActivity = Object.values(v._count).some(count => count > 0);
+      if (school && !['unknown', 'unknown school', '-', '—'].includes(school.toLowerCase()) && hasActivity) {
+        bySchool[school] = (bySchool[school] || 0) + 1;
+        withSchool++;
+      }
       if (v.graduationYear) byGradYear[v.graduationYear] = (byGradYear[v.graduationYear] || 0) + 1;
       if (v.packagePreference && byPackage[v.packagePreference] !== undefined) {
         byPackage[v.packagePreference] = (byPackage[v.packagePreference] || 0) + 1;
       }
     });
 
-    res.json({ byEducation, bySchool, byGradYear, byPackage });
+    const totals = {
+      visitors: visitors.length,
+      withEducation: visitors.filter(v => v.educationType).length,
+      withSchool,
+      withGradYear: visitors.filter(v => v.graduationYear).length,
+      withPackage: visitors.filter(v => v.packagePreference).length,
+    };
+
+    res.json({ byEducation, bySchool, byGradYear, byPackage, totals });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal Server Error' });
