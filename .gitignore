@@ -8,6 +8,7 @@ node_modules/
 .env.*
 !.env.example
 ga-tokens.json
+ga-oauth-tokens.json
 ga-credentials.json
 
 # Runtime & upload data

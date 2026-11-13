@@ -20,26 +20,35 @@ const getClientConfig = () => {
 
 let googleAuthClient = null;
 let oauth2ClientInstance = null;
+let loadedOAuthTokens = null;
 
 export const getOAuth2Client = () => {
   const { clientId, clientSecret, redirectUri } = getClientConfig();
   if (!oauth2ClientInstance) {
     oauth2ClientInstance = new OAuth2Client(clientId, clientSecret, redirectUri);
+    oauth2ClientInstance.on('tokens', (tokens) => {
+      // Refresh responses may omit the refresh token; keep it for future restarts.
+      saveOAuthTokens({ ...loadOAuthTokens(), ...tokens });
+    });
   }
   return oauth2ClientInstance;
 };
 
-export const getAuthUrl = () => {
+export const getAuthUrl = (loginHint) => {
   const client = getOAuth2Client();
   return client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
+    ...(loginHint ? { login_hint: loginHint } : {}),
     scope: ['https://www.googleapis.com/auth/analytics.readonly'],
   });
 };
 
 export const saveOAuthTokens = (tokens) => {
-  fs.writeFileSync(OAUTH_TOKENS_PATH, JSON.stringify(tokens, null, 2));
+  const merged = { ...loadOAuthTokens(), ...tokens };
+  fs.writeFileSync(OAUTH_TOKENS_PATH, JSON.stringify(merged, null, 2));
+  loadedOAuthTokens = JSON.stringify(merged);
+  oauth2ClientInstance?.setCredentials(merged);
 };
 
 export const loadOAuthTokens = () => {
@@ -58,6 +67,8 @@ export const clearOAuthTokens = () => {
   if (fs.existsSync(OAUTH_TOKENS_PATH)) {
     fs.unlinkSync(OAUTH_TOKENS_PATH);
   }
+  loadedOAuthTokens = null;
+  oauth2ClientInstance?.setCredentials({});
 };
 
 const getGoogleAuth = () => {
@@ -84,7 +95,11 @@ export const getValidAccessToken = async () => {
   const tokens = loadOAuthTokens();
   if (tokens) {
     const oauthClient = getOAuth2Client();
-    oauthClient.setCredentials(tokens);
+    const serialized = JSON.stringify(tokens);
+    if (serialized !== loadedOAuthTokens) {
+      oauthClient.setCredentials(tokens);
+      loadedOAuthTokens = serialized;
+    }
     try {
       const tokenRes = await oauthClient.getAccessToken();
       if (tokenRes?.token) {
