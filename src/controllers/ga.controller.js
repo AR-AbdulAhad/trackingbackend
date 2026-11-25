@@ -5,11 +5,25 @@ import {
   getAuthUrl,
   saveOAuthTokens,
   clearOAuthTokens,
+  getServiceAccountEmail,
   runGAReport,
   runGARealtimeReport
 } from '../lib/gaOAuth.js';
 
-const SERVICE_ACCOUNT_EMAIL = 'ga-reader@studentlife-509311.iam.gserviceaccount.com';
+const getErrorDetails = (error) => {
+  const requiresReauthentication = error.code === 'GA_OAUTH_REAUTH_REQUIRED';
+  const permissionRequired = error.code === 'PERMISSION_DENIED' ||
+    /does not have sufficient permissions/i.test(error.message || '');
+  const serviceAccountEmail = getServiceAccountEmail();
+
+  return {
+    error: error.message,
+    code: error.code || 'GA_API_ERROR',
+    requiresReauthentication,
+    permissionRequired,
+    ...(permissionRequired && serviceAccountEmail ? { serviceAccountEmail } : {}),
+  };
+};
 
 export const getStatus = (req, res) => {
   const oauth = isOAuthConnected();
@@ -17,7 +31,7 @@ export const getStatus = (req, res) => {
   res.json({
     connected: oauth || sa,
     isOAuth: oauth,
-    email: SERVICE_ACCOUNT_EMAIL,
+    email: getServiceAccountEmail(),
     propertyId: process.env.GA4_PROPERTY_ID || '503219826',
     propertyName: 'www.studentlife.dk',
     authType: oauth ? 'oauth' : 'service_account',
@@ -95,7 +109,9 @@ export const getRealtime = async (req, res) => {
         const minuteAgo = 29 - i;
         return { minuteAgo, activeUsers: byMinute.get(minuteAgo) || 0 };
       });
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[GA API Realtime] Minute breakdown failed:', e.message);
+    }
 
     // 3. Realtime Countries
     let byCountry = [];
@@ -109,7 +125,9 @@ export const getRealtime = async (req, res) => {
         country: row.dimensionValues?.[0]?.value || 'Unknown',
         activeUsers: Number(row.metricValues?.[0]?.value || 0),
       }));
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[GA API Realtime] Country breakdown failed:', e.message);
+    }
 
     return res.json({
       active30Min,
@@ -126,8 +144,7 @@ export const getRealtime = async (req, res) => {
       byCountry: [],
       isLive: false,
       permissionPending: true,
-      serviceAccountEmail: SERVICE_ACCOUNT_EMAIL,
-      error: err.message,
+      ...getErrorDetails(err),
     });
   }
 };
@@ -352,7 +369,7 @@ export const getSummary = async (req, res) => {
       propertyName: 'www.studentlife.dk',
       isLive: false,
       permissionPending: true,
-      error: err.message,
+      ...getErrorDetails(err),
     });
   }
 };
@@ -446,6 +463,6 @@ export const getReport = async (req, res) => {
     });
   } catch (err) {
     console.warn(`[GA API Report:${type}]`, err.message);
-    return res.status(502).json({ error: err.message, type, rows: [] });
+    return res.status(502).json({ ...getErrorDetails(err), type, rows: [] });
   }
 };
