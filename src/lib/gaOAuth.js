@@ -21,6 +21,7 @@ const getClientConfig = () => {
 let googleAuthClient = null;
 let oauth2ClientInstance = null;
 let loadedOAuthTokens = null;
+let accessTokenPromise = null;
 
 export const getOAuth2Client = () => {
   const { clientId, clientSecret, redirectUri } = getClientConfig();
@@ -90,8 +91,35 @@ export const isServiceAccountReady = () => {
   return fs.existsSync(CREDENTIALS_PATH);
 };
 
-export const getValidAccessToken = async () => {
-  // 1. Try OAuth tokens first (user login)
+export const getServiceAccountEmail = () => {
+  if (!isServiceAccountReady()) return null;
+  try {
+    const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
+    return typeof credentials.client_email === 'string' ? credentials.client_email : null;
+  } catch (error) {
+    console.warn('[GA Service Account] Could not read client email:', error.message);
+    return null;
+  }
+};
+
+const isInvalidGrant = (error) =>
+  error?.response?.data?.error === 'invalid_grant' ||
+  /\binvalid_grant\b/i.test(error?.message || '');
+
+const resolveValidAccessToken = async () => {
+  // Use the configured service account for unattended dashboard API requests.
+  const auth = getGoogleAuth();
+  if (auth) {
+    try {
+      const client = await auth.getClient();
+      const tokenRes = await client.getAccessToken();
+      if (tokenRes?.token) return tokenRes.token;
+    } catch (e) {
+      console.warn('[GA Service Account] Token request failed:', e.message);
+    }
+  }
+
+  // OAuth is only a fallback for installations without a usable service account.
   const tokens = loadOAuthTokens();
   if (tokens) {
     const oauthClient = getOAuth2Client();
@@ -102,22 +130,28 @@ export const getValidAccessToken = async () => {
     }
     try {
       const tokenRes = await oauthClient.getAccessToken();
-      if (tokenRes?.token) {
-        return tokenRes.token;
-      }
+      if (tokenRes?.token) return tokenRes.token;
     } catch (e) {
-      console.warn('[GA OAuth] Token refresh failed, falling back to service account:', e.message);
+      if (isInvalidGrant(e)) {
+        clearOAuthTokens();
+        const error = new Error('Google OAuth authorization expired or was revoked.');
+        error.code = 'GA_OAUTH_REAUTH_REQUIRED';
+        throw error;
+      }
+      throw e;
     }
   }
 
-  // 2. Fallback to Service Account
-  const auth = getGoogleAuth();
-  if (!auth) {
-    throw new Error('Neither Google OAuth tokens nor ga-credentials.json found');
+  throw new Error('No usable Google service account or OAuth tokens are configured');
+};
+
+export const getValidAccessToken = () => {
+  if (!accessTokenPromise) {
+    accessTokenPromise = resolveValidAccessToken().finally(() => {
+      accessTokenPromise = null;
+    });
   }
-  const client = await auth.getClient();
-  const tokenRes = await client.getAccessToken();
-  return tokenRes.token;
+  return accessTokenPromise;
 };
 
 export const runGAReport = async (requestBody, propertyIdOverride) => {
@@ -137,7 +171,9 @@ export const runGAReport = async (requestBody, propertyIdOverride) => {
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error?.message || 'GA4 runReport query failed');
+    const error = new Error(data.error?.message || 'GA4 runReport query failed');
+    error.code = data.error?.status || 'GA_API_ERROR';
+    throw error;
   }
   return data;
 };
@@ -159,7 +195,9 @@ export const runGARealtimeReport = async (requestBody, propertyIdOverride) => {
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error?.message || 'GA4 runRealtimeReport query failed');
+    const error = new Error(data.error?.message || 'GA4 runRealtimeReport query failed');
+    error.code = data.error?.status || 'GA_API_ERROR';
+    throw error;
   }
   return data;
 };
