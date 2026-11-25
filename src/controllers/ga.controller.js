@@ -426,6 +426,17 @@ export const getReport = async (req, res) => {
     const report = await runGAReport({
       dateRanges: [{ startDate: from, endDate: to }],
       dimensions: def.dimensions.map((name) => ({ name })),
+      // Exclude local development visits before GA calculates totals and limits.
+      ...(def.dimensions.includes('hostName') ? {
+        dimensionFilter: {
+          notExpression: {
+            filter: {
+              fieldName: 'hostName',
+              stringFilter: { matchType: 'EXACT', value: 'localhost', caseSensitive: false },
+            },
+          },
+        },
+      } : {}),
       ...(['cities', 'demographics', 'sources'].includes(type) ? {
         dimensionFilter: {
           notExpression: {
